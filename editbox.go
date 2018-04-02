@@ -1,6 +1,8 @@
 package termwin
 
-import termbox "github.com/nsf/termbox-go"
+import (
+	termbox "github.com/nsf/termbox-go"
+)
 
 // EditBoxMode defines settings for an EditBox.
 type EditBoxMode byte
@@ -16,8 +18,13 @@ const (
 )
 
 const (
-	contPrev byte = 1 << iota
-	contNext
+	contPrev byte = 1 << iota // continues previous line (word-wrap)
+	contNext                  // continues on next line (word-wrap)
+)
+
+const (
+	charNewline   rune = '\n'
+	charBackspace rune = '\b'
 )
 
 type row struct {
@@ -53,48 +60,78 @@ func NewEditBox(x, y, width, height int, mode EditBoxMode) *EditBox {
 	}
 }
 
-// InsertRune inserts a new rune at the current cursor position and advances
-// the cursor.
-func (e *EditBox) InsertRune(r rune) {
+// InsertChar inserts a new character at the current cursor position and
+// advances the cursor by one column.
+func (e *EditBox) InsertChar(ch rune) {
 }
 
 // InsertString inserts an entire string at the current cursor position
-// and advances the cursor.
+// and advances the cursor by the length of the string.
 func (e *EditBox) InsertString(s string) {
 }
 
-// DeleteRune deletes a rune at the current cursor position.
-func (e *EditBox) DeleteRune() {
+// InsertRow inserts a new row at the current cursor position, leaving
+// the cursor position unchanged.
+func (e *EditBox) InsertRow() {
 }
 
-// DeleteRunes deletes multiple runes starting from the current cursor
+// DeleteChar deletes a single character at the current cursor position.
+func (e *EditBox) DeleteChar() {
+}
+
+// DeleteChars deletes multiple characters starting from the current cursor
 // position.
-func (e *EditBox) DeleteRunes(n int) {
+func (e *EditBox) DeleteChars(n int) {
 }
 
-// RowCount returns the number of rows in the EditBox's buffer.
-func (e *EditBox) RowCount() int {
-	return len(e.viewRows)
+// DeleteRow deletes the entire row containing the cursor.
+func (e *EditBox) DeleteRow() {
 }
 
-// SetCursor sets the position of the cursor. Negative values position
-// the cursor relative to the last column and row of the buffer.
+// LastRow returns the row number of the last row in the view buffer.
+func (e *EditBox) LastRow() int {
+	return len(e.viewRows) - 1
+}
+
+// EndOfRow returns the column position representing the end of row `y`. Pass
+// a value of -1 for `y` to find the end of the row containing the cursor.
+// If the requested row doesn't exist, this returns -1.
+func (e *EditBox) EndOfRow(y int) int {
+	if y == -1 {
+		y = e.cursor.y
+	}
+	if y >= len(e.viewRows) {
+		return -1
+	}
+	row := &e.viewRows[y]
+	return len(row.cells)
+}
+
+// Size returns the width and height of the EditBox on screen.
+func (e *EditBox) Size() (width, height int) {
+	return e.screenRect.x1 - e.screenRect.x0, e.screenRect.y1 - e.screenRect.y0
+}
+
+// SetCursor sets the position of the cursor within the view buffer. Negative
+// values position the cursor relative to the last column and row of the
+// buffer. A value of -1 for x or y represents the cursor's current column or
+// row number, respectively.
 func (e *EditBox) SetCursor(x, y int) {
 }
 
-// Cursor returns the current position of the cursor.
+// Cursor returns the cursor's current column and row within the view buffer.
 func (e *EditBox) Cursor() (x, y int) {
 	return e.cursor.x, e.cursor.y
 }
 
-// SetTopLeft sets the buffer position to use as the top-left corner of
-// the visible EditBox.
-func (e *EditBox) SetTopLeft(x, y int) {
+// SetView adjusts the buffer position currently representing the top-left
+// corner of the visible EditBox.
+func (e *EditBox) SetView(x, y int) {
 }
 
-// TopLeft returns the buffer position currently representing the top-left
+// View returns the buffer position currently representing the top-left
 // corner of the visible EditBox.
-func (e *EditBox) TopLeft() (x, y int) {
+func (e *EditBox) View() (x, y int) {
 	return e.viewRect.x0, e.viewRect.y0
 }
 
