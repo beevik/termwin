@@ -13,6 +13,11 @@ func Init() error {
 	return nil
 }
 
+// Flush flushes the contents of the back buffer to the screen display.
+func Flush() {
+	termbox.Flush()
+}
+
 // Close shuts down the termwin system.
 func Close() {
 	termbox.Close()

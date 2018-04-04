@@ -1,5 +1,12 @@
 package termwin
 
+const (
+	minValue = -(1 << 31)
+	maxValue = ((1 << 31) - 1)
+)
+
+var emptyRect = rect{maxValue, maxValue, minValue, minValue}
+
 type vec2 struct {
 	x, y int
 }
@@ -15,6 +22,15 @@ func newRect(x, y, width, height int) rect {
 
 func (r rect) empty() bool {
 	return r.x1 <= r.x0 || r.y1 <= r.y0
+}
+
+func union(r1, r2 rect) rect {
+	return rect{
+		x0: min(r1.x0, r2.x0),
+		y0: min(r1.y0, r2.y0),
+		x1: max(r1.x1, r2.x1),
+		y1: max(r1.y1, r2.y1),
+	}
 }
 
 func intersection(r1, r2 rect) rect {
