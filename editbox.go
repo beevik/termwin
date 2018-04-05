@@ -26,6 +26,7 @@ const (
 
 const (
 	charNewline   rune = '\n'
+	charLinefeed  rune = '\r'
 	charBackspace rune = '\b'
 )
 
@@ -69,6 +70,7 @@ func NewEditBox(x, y, width, height int, mode EditBoxMode) *EditBox {
 		size:       vec2{width, height},
 		screenRect: newRect(x, y, width, height),
 		viewRect:   newRect(0, 0, width, height),
+		dirtyRect:  rect{0, 0, maxValue, maxValue},
 		rows:       []row{newRow(width)},
 	}
 }
@@ -94,15 +96,15 @@ func (e *EditBox) InsertChar(ch rune) {
 	switch {
 	case ch < 32:
 		switch ch {
-		case '\b':
-			e.cursor.x = max(e.cursor.x-1, 0)
+		case charBackspace:
+			e.updateCursor(max(e.cursor.x-1, 0), -1)
 
-		case '\n':
-			e.cursor.y++
+		case charNewline:
+			e.updateCursor(0, e.cursor.y+1)
 			e.InsertRow()
-			fallthrough
-		case '\r':
-			e.cursor.x = 0
+
+		case charLinefeed:
+			e.updateCursor(0, -1)
 		}
 
 	default:
@@ -114,7 +116,7 @@ func (e *EditBox) InsertChar(ch rune) {
 		}
 		cr.cells[cx] = termbox.Cell{Ch: ch}
 		e.updateDirtyRect(rect{e.cursor.x, e.cursor.y, maxValue, e.cursor.y + 1})
-		e.cursor.x++
+		e.adjustCursor(+1, 0)
 	}
 }
 
@@ -126,14 +128,15 @@ func (e *EditBox) InsertString(s string) {
 	}
 }
 
-// InsertRow inserts a new row at the current cursor position, leaving
-// the cursor position unchanged.
+// InsertRow inserts a new row at the current cursor position. The cursor
+// moves to the beginning of the inserted row.
 func (e *EditBox) InsertRow() {
 	cr := e.cursor.y
 	e.rows = append(e.rows, row{})
 	copy(e.rows[cr+1:], e.rows[cr:])
 	e.rows[cr] = newRow(e.size.x)
-	e.updateDirtyRect(rect{0, e.cursor.y, maxValue, maxValue})
+	e.updateCursor(0, -1)
+	e.updateDirtyRect(rect{0, cr, maxValue, maxValue})
 }
 
 // DeleteChar deletes a single character at the current cursor position.
@@ -190,7 +193,7 @@ func (e *EditBox) SetCursor(x, y int) {
 			x = 0
 		}
 	}
-	e.cursor = vec2{x, y}
+	e.updateCursor(x, y)
 }
 
 // Cursor returns the cursor's current column and row within the view buffer.
@@ -260,4 +263,43 @@ func clearCells(c []termbox.Cell) {
 
 func (e *EditBox) updateDirtyRect(r rect) {
 	e.dirtyRect = union(e.dirtyRect, r)
+}
+
+func (e *EditBox) adjustCursor(x, y int) {
+	e.cursor.x += x
+	e.cursor.y += y
+	e.updateView()
+}
+
+func (e *EditBox) updateCursor(x, y int) {
+	if x != -1 {
+		e.cursor.x = x
+	}
+	if y != -1 {
+		e.cursor.y = y
+	}
+	e.updateView()
+}
+
+func (e *EditBox) updateView() {
+	switch {
+	case e.cursor.x >= e.viewRect.x1:
+		dx := e.cursor.x - e.viewRect.x1 + 1
+		e.viewRect.x0 += dx
+		e.viewRect.x1 += dx
+	case e.cursor.x < e.viewRect.x0:
+		dx := e.viewRect.x0 - e.cursor.x
+		e.viewRect.x0 -= dx
+		e.viewRect.x1 -= dx
+	}
+	switch {
+	case e.cursor.y >= e.viewRect.y1:
+		dy := e.cursor.y - e.viewRect.y1 + 1
+		e.viewRect.y0 += dy
+		e.viewRect.y1 += dy
+	case e.cursor.y < e.viewRect.y0:
+		dy := e.viewRect.y0 - e.cursor.y
+		e.viewRect.y0 -= dy
+		e.viewRect.y1 -= dy
+	}
 }
