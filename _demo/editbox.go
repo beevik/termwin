@@ -24,8 +24,8 @@ func main() {
 	editbox.InsertString("foobar01234567890")
 	editbox.SetCursor(0, 0)
 	editbox.InsertString("\ntest\na\nb\nc\nd")
-	// editbox.SetCursor(0, 0)
-	// editbox.InsertString("!!!")
+	editbox.SetCursor(4, 1)
+	editbox.DeleteChar()
 	editbox.Draw()
 
 	termwin.Flush()

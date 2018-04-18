@@ -93,14 +93,15 @@ func (e *EditBox) Write(p []byte) (n int, err error) {
 // InsertChar inserts a new character at the current cursor position and
 // advances the cursor by one column.
 func (e *EditBox) InsertChar(ch rune) {
+	cx, cy := e.cursor.x, e.cursor.y
 	switch {
 	case ch < 32:
 		switch ch {
 		case charBackspace:
-			e.updateCursor(max(e.cursor.x-1, 0), -1)
+			e.updateCursor(max(cx-1, 0), -1)
 
 		case charNewline:
-			e.updateCursor(0, e.cursor.y+1)
+			e.updateCursor(0, cy+1)
 			e.InsertRow()
 
 		case charLinefeed:
@@ -108,14 +109,13 @@ func (e *EditBox) InsertChar(ch rune) {
 		}
 
 	default:
-		cr := &e.rows[e.cursor.y]
+		cr := &e.rows[cy]
 		cr.grow(1)
-		cx := e.cursor.x
 		if cx <= len(cr.cells) {
 			copy(cr.cells[cx+1:], cr.cells[cx:])
 		}
 		cr.cells[cx] = termbox.Cell{Ch: ch}
-		e.updateDirtyRect(rect{e.cursor.x, e.cursor.y, maxValue, e.cursor.y + 1})
+		e.updateDirtyRect(rect{cx, cy, maxValue, cy + 1})
 		e.adjustCursor(+1, 0)
 	}
 }
@@ -141,15 +141,44 @@ func (e *EditBox) InsertRow() {
 
 // DeleteChar deletes a single character at the current cursor position.
 func (e *EditBox) DeleteChar() {
+	cx, cy := e.cursor.x, e.cursor.y
+	cr := &e.rows[cy]
+
+	// At end of line? Merge lines.
+	if e.cursor.x >= len(cr.cells) {
+		if cy+1 < len(e.rows) {
+			nr := &e.rows[cy+1]
+			cr.cells = append(cr.cells, nr.cells...)
+			e.rows = append(e.rows[:cy+1], e.rows[cy+2:]...)
+			e.updateDirtyRect(rect{0, cy, maxValue, maxValue})
+		}
+		return
+	}
+
+	// Remove character from line
+	copy(cr.cells[cx:], cr.cells[cx+1:])
+	cr.cells = cr.cells[:len(cr.cells)-1]
+	e.updateDirtyRect(rect{cx, cy, maxValue, cy + 1})
 }
 
 // DeleteChars deletes multiple characters starting from the current cursor
 // position.
 func (e *EditBox) DeleteChars(n int) {
+	for i := 0; i < n; i++ {
+		e.DeleteChar()
+	}
 }
 
 // DeleteRow deletes the entire row containing the cursor.
 func (e *EditBox) DeleteRow() {
+	cy := e.cursor.y
+	if cy+1 < len(e.rows) {
+		e.rows = append(e.rows[:cy+1], e.rows[cy+2:]...)
+		e.updateDirtyRect(rect{0, cy, maxValue, maxValue})
+	} else {
+		e.rows = e.rows[:cy+1]
+		e.updateDirtyRect(rect{0, cy, maxValue, maxValue})
+	}
 }
 
 // LastRow returns the row number of the last row in the view buffer.
@@ -204,6 +233,8 @@ func (e *EditBox) Cursor() (x, y int) {
 // SetView adjusts the buffer position currently representing the top-left
 // corner of the visible EditBox.
 func (e *EditBox) SetView(x, y int) {
+	e.viewRect = rect{x, y, x + e.size.x, y + e.size.y}
+	e.updateDirtyRect(e.viewRect)
 }
 
 // View returns the buffer position currently representing the top-left
@@ -236,18 +267,23 @@ func (e *EditBox) Draw() {
 	offset := e.screenRect.x0 + e.screenRect.y0*cx
 
 	r := intersection(e.dirtyRect, e.viewRect)
-	pitch := r.x1 - r.x0
 	e.dirtyRect = emptyRect
 
-	ym := min(r.y1, len(e.rows))
-	for y := r.y0; y < ym; y++ {
+	pitch, height := r.x1-r.x0, r.y1-r.y0
+
+	ymax := min(r.y1, len(e.rows))
+	ymin := min(max(r.y0, 0), ymax)
+	for y := ymin; y < ymax; y++ {
 		row := &e.rows[y]
-		xm := min(r.x1, len(row.cells))
-		copy(dst[offset:], row.cells[r.x0:xm])
-		clearCells(dst[offset+xm-r.x0 : offset+pitch])
+		xmax := min(r.x1, len(row.cells))
+		xmin := min(max(r.x0, 0), xmax)
+		copy(dst[offset:], row.cells[xmin:xmax])
+		clearCells(dst[offset+xmax-xmin : offset+pitch])
 		offset += cx
 	}
-	for y := ym; y < r.y1; y++ {
+
+	remain := height - (ymax - ymin)
+	for y := 0; y < remain; y++ {
 		clearCells(dst[offset : offset+pitch])
 		offset += cx
 	}
@@ -265,9 +301,9 @@ func (e *EditBox) updateDirtyRect(r rect) {
 	e.dirtyRect = union(e.dirtyRect, r)
 }
 
-func (e *EditBox) adjustCursor(x, y int) {
-	e.cursor.x += x
-	e.cursor.y += y
+func (e *EditBox) adjustCursor(dx, dy int) {
+	e.cursor.x += dx
+	e.cursor.y += dy
 	e.updateView()
 }
 
