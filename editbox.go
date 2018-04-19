@@ -6,13 +6,13 @@ import (
 	termbox "github.com/nsf/termbox-go"
 )
 
-// EditBoxMode defines settings for an EditBox.
-type EditBoxMode byte
+// EditBoxFlags define settings for an EditBox.
+type EditBoxFlags byte
 
 const (
 	// EditBoxWordWrap causes the edit box to word-wrap a line of text when
 	// its length reaches the right edge of the screen.
-	EditBoxWordWrap EditBoxMode = 1 << iota
+	EditBoxWordWrap EditBoxFlags = 1 << iota
 
 	// EditBoxSingleRow allows only a single row of text. Carriage returns
 	// and word-wrap are ignored.
@@ -45,7 +45,7 @@ func newRow(width int) row {
 func (r *row) grow(n int) {
 	l := len(r.cells) + n
 	if l > cap(r.cells) {
-		cells := make([]termbox.Cell, l, cap(r.cells)*2)
+		cells := make([]termbox.Cell, l, max(l, cap(r.cells)*2))
 		copy(cells, r.cells)
 	}
 	r.cells = append(r.cells, termbox.Cell{})
@@ -53,26 +53,69 @@ func (r *row) grow(n int) {
 
 // An EditBox represents a editable text control with fixed screen dimensions.
 type EditBox struct {
-	mode       EditBoxMode
-	size       vec2  // dimensions of the edit box
-	screenRect rect  // screen dimensions of the edit box
-	viewRect   rect  // buffer currently visible
-	dirtyRect  rect  // portions of the buffer that have been updated
-	rows       []row // all rows in the buffer
-	cursor     vec2  // current cursor position
+	flags        EditBoxFlags
+	size         vec2  // dimensions of the edit box
+	screenCorner vec2  // screen coordinate of top-left corner
+	viewRect     rect  // buffer currently visible
+	dirtyRect    rect  // portions of the buffer that have been updated
+	rows         []row // all rows in the buffer
+	cursor       vec2  // current cursor position
+}
+
+func (e *EditBox) onDraw() {
+	e.Draw()
+}
+
+func (e *EditBox) onKey(ev termbox.Event) {
+	switch ev.Key {
+	case termbox.KeyArrowLeft, termbox.KeyCtrlB:
+		e.CursorLeft()
+	case termbox.KeyArrowRight, termbox.KeyCtrlF:
+		e.CursorRight()
+	case termbox.KeyArrowUp:
+		e.CursorUp()
+	case termbox.KeyArrowDown:
+		e.CursorDown()
+	case termbox.KeyDelete, termbox.KeyCtrlD:
+		e.DeleteChar()
+	case termbox.KeySpace:
+		e.InsertChar(' ')
+	case termbox.KeyHome, termbox.KeyCtrlA:
+		e.updateCursor(0, e.cursor.y)
+	case termbox.KeyEnd, termbox.KeyCtrlE:
+		e.updateCursor(e.EndOfRow(e.cursor.y), e.cursor.y)
+	case termbox.KeyEnter:
+		e.InsertChar('\n')
+	default:
+		if ev.Ch == rune('`') {
+			Logln(e.Contents())
+			panic("exit")
+		}
+		if ev.Ch != 0 {
+			e.InsertChar(ev.Ch)
+		}
+	}
+}
+
+func (e *EditBox) onSetCursor() {
+	x := e.cursor.x - e.viewRect.x0 + e.screenCorner.x
+	y := e.cursor.y - e.viewRect.y0 + e.screenCorner.y
+	termbox.SetCursor(x, y)
 }
 
 // NewEditBox creates a new EditBox control with the specified screen
 // position and size.
-func NewEditBox(x, y, width, height int, mode EditBoxMode) *EditBox {
-	return &EditBox{
-		mode:       mode,
-		size:       vec2{width, height},
-		screenRect: newRect(x, y, width, height),
-		viewRect:   newRect(0, 0, width, height),
-		dirtyRect:  rect{0, 0, maxValue, maxValue},
-		rows:       []row{newRow(width)},
+func NewEditBox(x, y, width, height int, flags EditBoxFlags) *EditBox {
+	e := &EditBox{
+		flags:        flags,
+		size:         vec2{width, height},
+		screenCorner: vec2{x, y},
+		viewRect:     newRect(0, 0, width, height),
+		dirtyRect:    rect{0, 0, maxValue, maxValue},
+		rows:         []row{newRow(width)},
 	}
+	addWindow(e)
+	return e
 }
 
 // Write the contents of a UTF8-formatted buffer starting at the current
@@ -103,6 +146,11 @@ func (e *EditBox) InsertChar(ch rune) {
 		case charNewline:
 			e.updateCursor(0, cy+1)
 			e.InsertRow()
+			cr := &e.rows[cy]
+			nr := &e.rows[cy+1]
+			nr.cells = cr.cells[cx:]
+			cr.cells = cr.cells[:cx]
+			e.updateDirtyRect(rect{cx, cy, maxValue, cy + 1})
 
 		case charLinefeed:
 			e.updateCursor(0, -1)
@@ -205,23 +253,79 @@ func (e *EditBox) Size() (width, height int) {
 	return e.size.x, e.size.y
 }
 
+// CursorLeft moves the cursor left, shifting to the end of the previous line
+// if the cursor is at column 0.
+func (e *EditBox) CursorLeft() {
+	if e.cursor.x > 0 {
+		e.adjustCursor(-1, 0)
+	} else if e.cursor.y > 0 {
+		y := e.cursor.y - 1
+		r := &e.rows[y]
+		x := len(r.cells)
+		e.updateCursor(x, y)
+	}
+}
+
+// CursorRight moves the cursor right, shifting to the next line if the cursor
+// is at the right-most column of the current line.
+func (e *EditBox) CursorRight() {
+	r := &e.rows[e.cursor.y]
+	if e.cursor.x < len(r.cells) {
+		e.adjustCursor(+1, 0)
+	} else if e.cursor.y+1 < len(e.rows) {
+		e.updateCursor(0, e.cursor.y+1)
+	}
+}
+
+// CursorDown moves the cursor down a line.
+func (e *EditBox) CursorDown() {
+	if e.cursor.y+1 < len(e.rows) {
+		x, y := e.cursor.x, e.cursor.y+1
+		r := &e.rows[y]
+		if x > len(r.cells) {
+			x = len(r.cells)
+		}
+		e.updateCursor(x, y)
+	}
+}
+
+// CursorUp moves the cursor up a line.
+func (e *EditBox) CursorUp() {
+	if e.cursor.y > 0 {
+		x, y := e.cursor.x, e.cursor.y-1
+		r := &e.rows[y]
+		if x > len(r.cells) {
+			x = len(r.cells)
+		}
+		e.updateCursor(x, y)
+	}
+}
+
 // SetCursor sets the position of the cursor within the view buffer. Negative
 // values position the cursor relative to the last column and row of the
-// buffer. A value of -1 for x or y represents the cursor's current column or
-// row number, respectively.
+// buffer. A value of -1 for x indicates the end of the row. A value of -1
+// for y indicates the last row.
 func (e *EditBox) SetCursor(x, y int) {
 	if y < 0 {
 		y = len(e.rows) + y
 		if y < 0 {
 			y = 0
 		}
+	} else if y >= len(e.rows) {
+		y = len(e.rows) - 1
 	}
+
+	cr := &e.rows[y]
+
 	if x < 0 {
-		x = len(e.rows[y].cells) + x
+		x = len(e.rows[y].cells) + 1 + x
 		if x < 0 {
 			x = 0
 		}
+	} else if x > len(cr.cells) {
+		x = len(cr.cells)
 	}
+
 	e.updateCursor(x, y)
 }
 
@@ -247,29 +351,34 @@ func (e *EditBox) View() (x, y int) {
 func (e *EditBox) Contents() string {
 	var rbuf = make([]byte, 4)
 	var buf []byte
-	for i, n := 0, len(e.rows); i < n; i++ {
+
+	encodeRow := func(i int) {
 		r := &e.rows[i]
 		for _, c := range r.cells {
-			utf8.EncodeRune(rbuf, c.Ch)
-			buf = append(buf, rbuf...)
-		}
-		if i+1 < n {
-			buf = append(buf, '\n')
+			sz := utf8.EncodeRune(rbuf, c.Ch)
+			buf = append(buf, rbuf[:sz]...)
 		}
 	}
+
+	i := 0
+	for n := len(e.rows) - 1; i < n; i++ {
+		encodeRow(i)
+		buf = append(buf, '\n')
+	}
+	encodeRow(i)
+
 	return string(buf)
 }
 
 // Draw updates the contents of the EditBox on the screen.
 func (e *EditBox) Draw() {
-	dst := termbox.CellBuffer()
-	cx, _ := termbox.Size()
-	offset := e.screenRect.x0 + e.screenRect.y0*cx
+	buf := termbox.CellBuffer()
+	stride, _ := termbox.Size()
 
 	r := intersection(e.dirtyRect, e.viewRect)
-	e.dirtyRect = emptyRect
+	width, height := r.x1-r.x0, r.y1-r.y0
 
-	pitch, height := r.x1-r.x0, r.y1-r.y0
+	boffset := e.screenCorner.x + (e.screenCorner.y+r.y0-e.viewRect.y0)*stride
 
 	ymax := min(r.y1, len(e.rows))
 	ymin := min(max(r.y0, 0), ymax)
@@ -277,16 +386,19 @@ func (e *EditBox) Draw() {
 		row := &e.rows[y]
 		xmax := min(r.x1, len(row.cells))
 		xmin := min(max(r.x0, 0), xmax)
-		copy(dst[offset:], row.cells[xmin:xmax])
-		clearCells(dst[offset+xmax-xmin : offset+pitch])
-		offset += cx
+		o := boffset + r.x0 - e.viewRect.x0
+		copy(buf[o:], row.cells[xmin:xmax])
+		clearCells(buf[o+xmax-xmin : o+width])
+		boffset += stride
 	}
 
 	remain := height - (ymax - ymin)
 	for y := 0; y < remain; y++ {
-		clearCells(dst[offset : offset+pitch])
-		offset += cx
+		clearCells(buf[boffset : boffset+width])
+		boffset += stride
 	}
+
+	e.dirtyRect = emptyRect
 }
 
 var emptyCell = termbox.Cell{Ch: ' '}
@@ -323,19 +435,24 @@ func (e *EditBox) updateView() {
 		dx := e.cursor.x - e.viewRect.x1 + 1
 		e.viewRect.x0 += dx
 		e.viewRect.x1 += dx
+		e.updateDirtyRect(e.viewRect)
 	case e.cursor.x < e.viewRect.x0:
 		dx := e.viewRect.x0 - e.cursor.x
 		e.viewRect.x0 -= dx
 		e.viewRect.x1 -= dx
+		e.updateDirtyRect(e.viewRect)
 	}
+
 	switch {
 	case e.cursor.y >= e.viewRect.y1:
 		dy := e.cursor.y - e.viewRect.y1 + 1
 		e.viewRect.y0 += dy
 		e.viewRect.y1 += dy
+		e.updateDirtyRect(e.viewRect)
 	case e.cursor.y < e.viewRect.y0:
 		dy := e.viewRect.y0 - e.cursor.y
 		e.viewRect.y0 -= dy
 		e.viewRect.y1 -= dy
+		e.updateDirtyRect(e.viewRect)
 	}
 }

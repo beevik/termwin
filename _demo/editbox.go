@@ -1,8 +1,6 @@
 package main
 
 import (
-	"time"
-
 	"github.com/nsf/termbox-go"
 
 	"github.com/beevik/termwin"
@@ -19,18 +17,24 @@ func main() {
 
 	erase()
 
-	editbox := termwin.NewEditBox(5, 5, 16, 10, 0)
+	editbox := termwin.NewEditBox(25, 8, 16, 10, termwin.EditBoxWordWrap)
 
 	editbox.InsertString("foobar01234567890")
 	editbox.SetCursor(0, 0)
-	editbox.InsertString("\ntest\na\nb\nc\nd")
-	editbox.SetCursor(4, 1)
-	editbox.DeleteChar()
-	editbox.Draw()
+	editbox.InsertString("\ntest\na\nb\nc\nd\n")
+	editbox.SetCursor(-1, -1)
+	editbox.InsertString("lalala")
+	editbox.SetCursor(0, 1)
+	//editbox.Draw()
 
-	termwin.Flush()
+	for {
+		termwin.Flush()
+		termwin.Poll()
+	}
 
-	time.Sleep(time.Second * 1)
+	// termwin.Logln(editbox.Contents())
+
+	// time.Sleep(time.Second * 1)
 }
 
 func erase() {
