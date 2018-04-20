@@ -3,7 +3,7 @@ package termwin
 import (
 	"unicode/utf8"
 
-	termbox "github.com/nsf/termbox-go"
+	tb "github.com/nsf/termbox-go"
 )
 
 // EditBoxFlags define settings for an EditBox.
@@ -31,13 +31,13 @@ const (
 )
 
 type row struct {
-	cells []termbox.Cell
+	cells []tb.Cell
 	flags byte
 }
 
 func newRow(width int) row {
 	return row{
-		cells: make([]termbox.Cell, 0, width),
+		cells: make([]tb.Cell, 0, width),
 		flags: 0,
 	}
 }
@@ -45,10 +45,10 @@ func newRow(width int) row {
 func (r *row) grow(n int) {
 	l := len(r.cells) + n
 	if l > cap(r.cells) {
-		cells := make([]termbox.Cell, l, max(l, cap(r.cells)*2))
+		cells := make([]tb.Cell, l, max(l, cap(r.cells)*2))
 		copy(cells, r.cells)
 	}
-	r.cells = append(r.cells, termbox.Cell{})
+	r.cells = append(r.cells, tb.Cell{})
 }
 
 // An EditBox represents a editable text control with fixed screen dimensions.
@@ -66,31 +66,39 @@ func (e *EditBox) onDraw() {
 	e.Draw()
 }
 
-func (e *EditBox) onKey(ev termbox.Event) {
+func (e *EditBox) onKey(ev tb.Event) {
 	switch ev.Key {
-	case termbox.KeyArrowLeft, termbox.KeyCtrlB:
+	case tb.KeyEsc:
+		Logln(e.Contents())
+		panic("exit")
+	case tb.KeyArrowLeft, tb.KeyCtrlB:
 		e.CursorLeft()
-	case termbox.KeyArrowRight, termbox.KeyCtrlF:
+	case tb.KeyArrowRight, tb.KeyCtrlF:
 		e.CursorRight()
-	case termbox.KeyArrowUp:
+	case tb.KeyArrowUp:
 		e.CursorUp()
-	case termbox.KeyArrowDown:
+	case tb.KeyArrowDown:
 		e.CursorDown()
-	case termbox.KeyDelete, termbox.KeyCtrlD:
+	case tb.KeyPgdn:
+		e.SetCursor(e.cursor.x, e.cursor.y+e.size.y)
+	case tb.KeyPgup:
+		e.SetCursor(e.cursor.x, max(e.cursor.y-e.size.y, 0))
+	case tb.KeyDelete, tb.KeyCtrlD:
 		e.DeleteChar()
-	case termbox.KeySpace:
+	case tb.KeyBackspace, tb.KeyBackspace2:
+		if e.cursor.x > 0 || e.cursor.y > 0 {
+			e.CursorLeft()
+			e.DeleteChar()
+		}
+	case tb.KeySpace:
 		e.InsertChar(' ')
-	case termbox.KeyHome, termbox.KeyCtrlA:
+	case tb.KeyHome, tb.KeyCtrlA:
 		e.updateCursor(0, e.cursor.y)
-	case termbox.KeyEnd, termbox.KeyCtrlE:
+	case tb.KeyEnd, tb.KeyCtrlE:
 		e.updateCursor(e.EndOfRow(e.cursor.y), e.cursor.y)
-	case termbox.KeyEnter:
+	case tb.KeyEnter:
 		e.InsertChar('\n')
 	default:
-		if ev.Ch == rune('`') {
-			Logln(e.Contents())
-			panic("exit")
-		}
 		if ev.Ch != 0 {
 			e.InsertChar(ev.Ch)
 		}
@@ -100,7 +108,7 @@ func (e *EditBox) onKey(ev termbox.Event) {
 func (e *EditBox) onSetCursor() {
 	x := e.cursor.x - e.viewRect.x0 + e.screenCorner.x
 	y := e.cursor.y - e.viewRect.y0 + e.screenCorner.y
-	termbox.SetCursor(x, y)
+	tb.SetCursor(x, y)
 }
 
 // NewEditBox creates a new EditBox control with the specified screen
@@ -162,7 +170,7 @@ func (e *EditBox) InsertChar(ch rune) {
 		if cx <= len(cr.cells) {
 			copy(cr.cells[cx+1:], cr.cells[cx:])
 		}
-		cr.cells[cx] = termbox.Cell{Ch: ch}
+		cr.cells[cx] = tb.Cell{Ch: ch}
 		e.updateDirtyRect(rect{cx, cy, maxValue, cy + 1})
 		e.adjustCursor(+1, 0)
 	}
@@ -372,8 +380,8 @@ func (e *EditBox) Contents() string {
 
 // Draw updates the contents of the EditBox on the screen.
 func (e *EditBox) Draw() {
-	buf := termbox.CellBuffer()
-	stride, _ := termbox.Size()
+	buf := tb.CellBuffer()
+	stride, _ := tb.Size()
 
 	r := intersection(e.dirtyRect, e.viewRect)
 	width, height := r.x1-r.x0, r.y1-r.y0
@@ -401,9 +409,9 @@ func (e *EditBox) Draw() {
 	e.dirtyRect = emptyRect
 }
 
-var emptyCell = termbox.Cell{Ch: ' '}
+var emptyCell = tb.Cell{Ch: ' '}
 
-func clearCells(c []termbox.Cell) {
+func clearCells(c []tb.Cell) {
 	for i := range c {
 		c[i] = emptyCell
 	}

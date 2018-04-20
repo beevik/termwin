@@ -1,6 +1,8 @@
 package termwin
 
-import termbox "github.com/nsf/termbox-go"
+import (
+	tb "github.com/nsf/termbox-go"
+)
 
 var c context
 
@@ -18,12 +20,12 @@ func addWindow(w window) {
 
 // Init must be called before any termwin controls can be used.
 func Init() error {
-	err := termbox.Init()
+	err := tb.Init()
 	if err != nil {
 		return err
 	}
 
-	termbox.SetInputMode(termbox.InputEsc | termbox.InputMouse)
+	tb.SetInputMode(tb.InputEsc)
 	return nil
 }
 
@@ -37,22 +39,22 @@ func Flush() {
 		c.focus.onSetCursor()
 	}
 
-	termbox.Flush()
+	tb.Flush()
 }
 
 // Close shuts down the termwin system.
 func Close() {
-	termbox.Close()
+	tb.Close()
 }
 
 // Poll polls the system for an input event
 func Poll() {
-	switch ev := termbox.PollEvent(); ev.Type {
-	case termbox.EventKey:
+	switch ev := tb.PollEvent(); ev.Type {
+	case tb.EventKey:
 		if c.focus != nil {
 			c.focus.onKey(ev)
 		}
-	case termbox.EventError:
+	case tb.EventError:
 		panic(ev.Err)
 	}
 }

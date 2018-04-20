@@ -1,0 +1,16 @@
+{
+	"ImportPath": "github.com/beevik/termwin",
+	"GoVersion": "go1.10",
+	"GodepVersion": "v80",
+	"Deps": [
+		{
+			"ImportPath": "github.com/mattn/go-runewidth",
+			"Comment": "v0.0.2-14-gce7b0b5",
+			"Rev": "ce7b0b5c7b45a81508558cd1dba6bb1e4ddb51bb"
+		},
+		{
+			"ImportPath": "github.com/nsf/termbox-go",
+			"Rev": "e2050e41c8847748ec5288741c0b19a8cb26d084"
+		}
+	]
+}
