@@ -70,7 +70,6 @@ func (e *EditBox) onKey(ev tb.Event) {
 	switch ev.Key {
 	case tb.KeyEsc:
 		Logln(e.Contents())
-		panic("exit")
 	case tb.KeyArrowLeft, tb.KeyCtrlB:
 		e.CursorLeft()
 	case tb.KeyArrowRight, tb.KeyCtrlF:
@@ -99,6 +98,9 @@ func (e *EditBox) onKey(ev tb.Event) {
 	case tb.KeyEnter:
 		e.InsertChar('\n')
 	default:
+		if ev.Ch == '`' {
+			panic("exit")
+		}
 		if ev.Ch != 0 {
 			e.InsertChar(ev.Ch)
 		}

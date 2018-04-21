@@ -128,6 +128,8 @@ const (
 const (
 	ModAlt Modifier = 1 << iota
 	ModMotion
+	ModCtrl
+	ModShift
 )
 
 // Cell colors, you can combine a color with multiple attributes using bitwise
