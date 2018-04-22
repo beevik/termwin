@@ -54,12 +54,15 @@ func (r *row) grow(n int) {
 // An EditBox represents a editable text control with fixed screen dimensions.
 type EditBox struct {
 	flags        EditBoxFlags
-	size         vec2  // dimensions of the edit box
-	screenCorner vec2  // screen coordinate of top-left corner
-	viewRect     rect  // buffer currently visible
-	dirtyRect    rect  // portions of the buffer that have been updated
-	rows         []row // all rows in the buffer
-	cursor       vec2  // current cursor position
+	size         vec2        // dimensions of the edit box
+	screenCorner vec2        // screen coordinate of top-left corner
+	viewRect     rect        // buffer currently visible
+	dirtyRect    rect        // portions of the buffer that have been updated
+	rows         []row       // all rows in the buffer
+	cursor       vec2        // current cursor position
+	mod          tb.Modifier // currently active modifier keys
+	selectStart  vec2        // selection beginning
+	selectStop   vec2        // selection end
 }
 
 func (e *EditBox) onDraw() {
@@ -67,9 +70,9 @@ func (e *EditBox) onDraw() {
 }
 
 func (e *EditBox) onKey(ev tb.Event) {
+	cx, cy := e.cursor.x, e.cursor.y
+	e.mod = ev.Mod
 	switch ev.Key {
-	case tb.KeyEsc:
-		Logln(e.Contents())
 	case tb.KeyArrowLeft, tb.KeyCtrlB:
 		e.CursorLeft()
 	case tb.KeyArrowRight, tb.KeyCtrlF:
@@ -78,27 +81,25 @@ func (e *EditBox) onKey(ev tb.Event) {
 		e.CursorUp()
 	case tb.KeyArrowDown:
 		e.CursorDown()
+	case tb.KeyHome, tb.KeyCtrlA:
+		e.updateCursor(0, cy)
+	case tb.KeyEnd, tb.KeyCtrlE:
+		e.updateCursor(e.EndOfRow(cy), cy)
 	case tb.KeyPgdn:
-		e.SetCursor(e.cursor.x, e.cursor.y+e.size.y)
+		e.SetCursor(cx, cy+e.size.y)
 	case tb.KeyPgup:
-		e.SetCursor(e.cursor.x, max(e.cursor.y-e.size.y, 0))
+		e.SetCursor(cx, max(cy-e.size.y, 0))
 	case tb.KeyDelete, tb.KeyCtrlD:
 		e.DeleteChar()
 	case tb.KeyBackspace, tb.KeyBackspace2:
-		if e.cursor.x > 0 || e.cursor.y > 0 {
-			e.CursorLeft()
-			e.DeleteChar()
-		}
+		e.DeleteCharLeft()
 	case tb.KeySpace:
 		e.InsertChar(' ')
-	case tb.KeyHome, tb.KeyCtrlA:
-		e.updateCursor(0, e.cursor.y)
-	case tb.KeyEnd, tb.KeyCtrlE:
-		e.updateCursor(e.EndOfRow(e.cursor.y), e.cursor.y)
 	case tb.KeyEnter:
 		e.InsertChar('\n')
 	default:
 		if ev.Ch == '`' {
+			Logln(e.Contents())
 			panic("exit")
 		}
 		if ev.Ch != 0 {
@@ -151,19 +152,19 @@ func (e *EditBox) InsertChar(ch rune) {
 	case ch < 32:
 		switch ch {
 		case charBackspace:
-			e.updateCursor(max(cx-1, 0), -1)
+			e.updateCursor(max(cx-1, 0), cy)
 
 		case charNewline:
 			e.updateCursor(0, cy+1)
 			e.InsertRow()
 			cr := &e.rows[cy]
 			nr := &e.rows[cy+1]
-			nr.cells = cr.cells[cx:]
+			nr.cells = append(nr.cells, cr.cells[cx:]...)
 			cr.cells = cr.cells[:cx]
 			e.updateDirtyRect(rect{cx, cy, maxValue, cy + 1})
 
 		case charLinefeed:
-			e.updateCursor(0, -1)
+			e.updateCursor(0, cy)
 		}
 
 	default:
@@ -189,12 +190,12 @@ func (e *EditBox) InsertString(s string) {
 // InsertRow inserts a new row at the current cursor position. The cursor
 // moves to the beginning of the inserted row.
 func (e *EditBox) InsertRow() {
-	cr := e.cursor.y
+	cy := e.cursor.y
 	e.rows = append(e.rows, row{})
-	copy(e.rows[cr+1:], e.rows[cr:])
-	e.rows[cr] = newRow(e.size.x)
-	e.updateCursor(0, -1)
-	e.updateDirtyRect(rect{0, cr, maxValue, maxValue})
+	copy(e.rows[cy+1:], e.rows[cy:])
+	e.rows[cy] = newRow(e.size.x)
+	e.updateCursor(0, cy)
+	e.updateDirtyRect(rect{0, cy, maxValue, maxValue})
 }
 
 // DeleteChar deletes a single character at the current cursor position.
@@ -217,6 +218,16 @@ func (e *EditBox) DeleteChar() {
 	copy(cr.cells[cx:], cr.cells[cx+1:])
 	cr.cells = cr.cells[:len(cr.cells)-1]
 	e.updateDirtyRect(rect{cx, cy, maxValue, cy + 1})
+}
+
+// DeleteCharLeft deletes the character to the left of the cursor and moves
+// the cursor to the position of the deleted character. If the cursor is at
+// the start of the line, the newline is removed.
+func (e *EditBox) DeleteCharLeft() {
+	if e.cursor.x > 0 || e.cursor.y > 0 {
+		e.CursorLeft()
+		e.DeleteChar()
+	}
 }
 
 // DeleteChars deletes multiple characters starting from the current cursor
@@ -419,24 +430,85 @@ func clearCells(c []tb.Cell) {
 	}
 }
 
+func (e *EditBox) cellAtPos(x, y int) *tb.Cell {
+	if x < 0 || y < 0 || y >= len(e.rows) {
+		return nil
+	}
+	cr := &e.rows[y]
+	if x >= len(cr.cells) {
+		return nil
+	}
+
+	return &cr.cells[x]
+}
+
 func (e *EditBox) updateDirtyRect(r rect) {
 	e.dirtyRect = union(e.dirtyRect, r)
 }
 
 func (e *EditBox) adjustCursor(dx, dy int) {
-	e.cursor.x += dx
-	e.cursor.y += dy
+	e.updateCursor(e.cursor.x+dx, e.cursor.y+dy)
 	e.updateView()
 }
 
+func rangeFromPos(r0, r1 vec2) (start, end vec2) {
+	switch {
+	case r0.y < r1.y:
+		return r0, r1
+	case r0.y > r1.y:
+		return r1, r0
+	case r0.x < r1.x:
+		return r0, r1
+	default:
+		return r1, r0
+	}
+}
+
+func setCellAttrib(c *tb.Cell, fg, bg tb.Attribute) {
+	c.Fg, c.Bg = fg, bg
+}
+
+func (e *EditBox) setCellAttribRange(r0, r1 vec2, fg, bg tb.Attribute) {
+	Logf("sca (%d,%d) (%d,%d)\n", r0.x, r0.y, r1.x, r1.y)
+
+	x, y := r0.x, r0.y
+	for ; y < r1.y; y++ {
+		cr := &e.rows[y]
+		for ; x < len(cr.cells); x++ {
+			Logf("SC1 (%d,%d)\n", x, y)
+			setCellAttrib(&cr.cells[x], fg, bg)
+		}
+		x = 0
+	}
+	for ; x < r1.x; x++ {
+		Logf("SC2 (%d,%d)\n", x, y)
+		setCellAttrib(e.cellAtPos(x, y), fg, bg)
+	}
+
+	e.updateDirtyRect(rect{0, r0.y, maxValue, r1.y + 1})
+}
+
 func (e *EditBox) updateCursor(x, y int) {
-	if x != -1 {
-		e.cursor.x = x
+	if (e.mod & tb.ModShift) != 0 {
+		r0, r1 := rangeFromPos(vec2{x, y}, vec2{e.cursor.x, e.cursor.y})
+		e.setCellAttribRange(r0, r1, tb.ColorBlack, tb.ColorWhite)
 	}
-	if y != -1 {
-		e.cursor.y = y
-	}
+
+	e.cursor.x, e.cursor.y = x, y
 	e.updateView()
+}
+
+func (e *EditBox) updateSelection(cx, cy int) {
+	if cx == e.cursor.x && cy == e.cursor.y {
+		return
+	}
+
+	c := e.cellAtPos(cx, cy)
+	if c == nil {
+		return
+	}
+
+	c.Fg, c.Bg = tb.ColorBlack, tb.ColorWhite
 }
 
 func (e *EditBox) updateView() {
