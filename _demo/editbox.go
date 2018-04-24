@@ -15,8 +15,6 @@ func main() {
 	}
 	defer termwin.Close()
 
-	erase()
-
 	editbox := termwin.NewEditBox(25, 8, 16, 10, termwin.EditBoxWordWrap)
 
 	editbox.InsertString("foobar01234567890")
@@ -37,18 +35,14 @@ func main() {
 	editbox.InsertString("babababa\n")
 	editbox.InsertString("babababa\n")
 	editbox.InsertString("babababa\n")
+	editbox.InsertString("end")
 
 	editbox.SetCursor(0, 0)
-	//editbox.Draw()
 
 	for {
 		termwin.Flush()
 		termwin.Poll()
 	}
-
-	// termwin.Logln(editbox.Contents())
-
-	// time.Sleep(time.Second * 1)
 }
 
 func erase() {

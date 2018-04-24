@@ -37,7 +37,7 @@ var (
 )
 
 type row struct {
-	cells []tb.Cell
+	cells []tb.Cell // edit buffer cells in this row
 	flags byte
 }
 
@@ -62,16 +62,14 @@ type EditBox struct {
 	flags        EditBoxFlags
 	size         vec2  // dimensions of the edit box
 	screenCorner vec2  // screen coordinate of top-left corner
-	viewRect     rect  // buffer currently visible
-	dirtyRect    rect  // portions of the buffer that have been updated
-	rows         []row // all rows in the buffer
+	viewRect     rect  // portion of edit buffer currently visible
+	dirtyRect    rect  // portions of the edit buffer that have been updated
+	rows         []row // all rows in the edit buffer
 	cursor       vec2  // current cursor position
 	lastX        int   // cursor X position after last horz move
 	selecting    bool  // cursor in selecting mode
 	selectStart  vec2  // selection beginning
 }
-
-// store a newline "blank" at the end of the row
 
 // selection mechanics:
 // - If a cursor movement key is pressed:
@@ -86,9 +84,12 @@ type EditBox struct {
 //     - clear selection
 //     - update cursor
 //     - set selecting to false
-//   - If text key is pressed and selecting is true:
+// - If a text key is pressed:
+//   - If selecting is true:
 //     - delete selection
 //     - insert key
+//   - If selecting is false:
+//	   - insert key
 
 func (e *EditBox) onDraw() {
 	e.Draw()
@@ -107,13 +108,13 @@ func (e *EditBox) onKey(ev tb.Event) {
 	case tb.KeyArrowDown:
 		e.CursorDown()
 	case tb.KeyHome, tb.KeyCtrlA:
-		e.CursorHome()
+		e.CursorStartOfLine()
 	case tb.KeyEnd, tb.KeyCtrlE:
-		e.CursorEnd()
+		e.CursorEndOfLine()
 	case tb.KeyPgdn:
-		e.CursorPgDn()
+		e.CursorPageDown()
 	case tb.KeyPgup:
-		e.CursorPgUp()
+		e.CursorPageUp()
 	case tb.KeyDelete, tb.KeyCtrlD:
 		e.DeleteChar()
 	case tb.KeyBackspace, tb.KeyBackspace2:
@@ -133,7 +134,9 @@ func (e *EditBox) onKey(ev tb.Event) {
 	}
 }
 
-func (e *EditBox) onSetCursor() {
+// onPositionCursor is by termwin every frame if this editbox has focus. It
+// tells termbox where to place the cursor on the screen.
+func (e *EditBox) onPositionCursor() {
 	cx := e.cursor.x - e.viewRect.x0 + e.screenCorner.x
 	cy := e.cursor.y - e.viewRect.y0 + e.screenCorner.y
 	tb.SetCursor(cx, cy)
@@ -182,10 +185,10 @@ func (e *EditBox) InsertChar(ch rune) {
 		case charNewline:
 			e.updateCursor(0, cy+1)
 			e.InsertRow()
-			cr := &e.rows[cy]
-			nr := &e.rows[cy+1]
-			nr.cells = append(nr.cells, cr.cells[cx:]...)
-			cr.cells = append(cr.cells[:cx], newlineCell)
+			currRow := &e.rows[cy]
+			nextRow := &e.rows[cy+1]
+			nextRow.cells = append(nextRow.cells, currRow.cells[cx:]...)
+			currRow.cells = append(currRow.cells[:cx], newlineCell)
 			e.updateDirtyRect(rect{cx, cy, maxValue, cy + 1})
 
 		case charLinefeed:
@@ -193,12 +196,12 @@ func (e *EditBox) InsertChar(ch rune) {
 		}
 
 	default:
-		cr := &e.rows[cy]
-		cr.grow(1)
-		copy(cr.cells[cx+1:], cr.cells[cx:])
-		cr.cells[cx] = tb.Cell{Ch: ch}
+		row := &e.rows[cy]
+		row.grow(1)
+		copy(row.cells[cx+1:], row.cells[cx:])
+		row.cells[cx] = tb.Cell{Ch: ch}
 		e.updateDirtyRect(rect{cx, cy, maxValue, cy + 1})
-		e.adjustCursor(+1, 0)
+		e.updateCursor(cx+1, cy)
 	}
 
 	e.lastX = e.cursor.x
@@ -226,14 +229,14 @@ func (e *EditBox) InsertRow() {
 // DeleteChar deletes a single character at the current cursor position.
 func (e *EditBox) DeleteChar() {
 	cx, cy := e.cursor.x, e.cursor.y
-	cl := e.rowLen(cy)
-	cr := &e.rows[cy]
+	rl := e.rowLen(cy)
+	row := &e.rows[cy]
 
 	// At end of line? Merge lines.
-	if cx >= cl {
+	if cx >= rl {
 		if cy+1 < len(e.rows) {
 			nr := &e.rows[cy+1]
-			cr.cells = append(cr.cells[:cl], nr.cells...)
+			row.cells = append(row.cells[:rl], nr.cells...)
 			e.rows = append(e.rows[:cy+1], e.rows[cy+2:]...)
 			e.updateDirtyRect(rect{0, cy, maxValue, maxValue})
 		}
@@ -241,8 +244,8 @@ func (e *EditBox) DeleteChar() {
 	}
 
 	// Remove character from line
-	copy(cr.cells[cx:], cr.cells[cx+1:])
-	cr.cells = cr.cells[:len(cr.cells)-1]
+	copy(row.cells[cx:], row.cells[cx+1:])
+	row.cells = row.cells[:len(row.cells)-1]
 	e.updateDirtyRect(rect{cx, cy, maxValue, cy + 1})
 }
 
@@ -276,22 +279,9 @@ func (e *EditBox) DeleteRow() {
 	}
 }
 
-// LastRow returns the row number of the last row in the view buffer.
+// LastRow returns the row number of the last row in the buffer.
 func (e *EditBox) LastRow() int {
 	return len(e.rows) - 1
-}
-
-// EndOfRow returns the column position representing the end of row `y`. Pass
-// a value of -1 for `y` to find the end of the row containing the cursor.
-// If the requested row doesn't exist, this returns -1.
-func (e *EditBox) EndOfRow(y int) int {
-	if y == -1 {
-		y = e.cursor.y
-	}
-	if y >= len(e.rows) {
-		return -1
-	}
-	return e.rowLen(y)
 }
 
 // Size returns the width and height of the EditBox on screen.
@@ -299,15 +289,46 @@ func (e *EditBox) Size() (width, height int) {
 	return e.size.x, e.size.y
 }
 
+// SelectionStart starts a selection beginning at the current cursor position.
+// Any previously selected characters will be unselected.
+func (e *EditBox) SelectionStart() {
+	// TODO: do unselection
+	e.selecting, e.selectStart = true, e.cursor
+}
+
+// SelectionStop ends the current selection and returns the string covered by
+// the selection.
+func (e *EditBox) SelectionStop() string {
+	s := e.SelectionGet()
+	if s == "" {
+		return s
+	}
+
+	// TODO: do unselection
+	e.selecting, e.selectStart = false, vec2{}
+	return s
+}
+
+// SelectionGet returns the contents of the substring currently selected in
+// the edit buffer.
+func (e *EditBox) SelectionGet() string {
+	if !e.selecting {
+		return ""
+	}
+
+	r0, r1 := reorderRange(e.selectStart, e.cursor)
+	return e.getContents(r0, r1)
+}
+
 // CursorLeft moves the cursor left, shifting to the end of the previous line
 // if the cursor is at column 0.
 func (e *EditBox) CursorLeft() {
-	if e.cursor.x > 0 {
-		e.adjustCursor(-1, 0)
-	} else if e.cursor.y > 0 {
-		cy := e.cursor.y - 1
-		cx := e.rowLen(cy)
-		e.updateCursor(cx, cy)
+	cx, cy := e.cursor.x, e.cursor.y
+	if cx > 0 {
+		e.updateCursor(cx-1, cy)
+	} else if cy > 0 {
+		cx := e.rowLen(cy - 1)
+		e.updateCursor(cx, cy-1)
 	}
 	e.lastX = e.cursor.x
 }
@@ -318,7 +339,7 @@ func (e *EditBox) CursorRight() {
 	cx, cy := e.cursor.x, e.cursor.y
 	rl := e.rowLen(cy)
 	if cx < rl {
-		e.adjustCursor(+1, 0)
+		e.updateCursor(cx+1, cy)
 	} else if cy+1 < len(e.rows) {
 		e.updateCursor(0, cy+1)
 	}
@@ -329,9 +350,9 @@ func (e *EditBox) CursorRight() {
 func (e *EditBox) CursorDown() {
 	if e.cursor.y+1 < len(e.rows) {
 		cx, cy := e.lastX, e.cursor.y+1
-		cl := e.rowLen(cy)
-		if cx > cl {
-			cx = cl
+		rl := e.rowLen(cy)
+		if cx > rl {
+			cx = rl
 		}
 		e.updateCursor(cx, cy)
 	}
@@ -341,60 +362,61 @@ func (e *EditBox) CursorDown() {
 func (e *EditBox) CursorUp() {
 	if e.cursor.y > 0 {
 		cx, cy := e.lastX, e.cursor.y-1
-		cl := e.rowLen(cy)
-		if cx > cl {
-			cx = cl
+		rl := e.rowLen(cy)
+		if cx > rl {
+			cx = rl
 		}
 		e.updateCursor(cx, cy)
 	}
 }
 
-// CursorHome moves the cursor to the start of the current line.
-func (e *EditBox) CursorHome() {
+// CursorStartOfLine moves the cursor to the start of the current line.
+func (e *EditBox) CursorStartOfLine() {
 	e.updateCursor(0, e.cursor.y)
 	e.lastX = e.cursor.x
 }
 
-// CursorEnd moves the cursor to the end of the current line.
-func (e *EditBox) CursorEnd() {
+// CursorEndOfLine moves the cursor to the end of the current line.
+func (e *EditBox) CursorEndOfLine() {
 	cy := e.cursor.y
-	e.updateCursor(e.EndOfRow(cy), cy)
+	cx := e.rowLen(cy)
+	e.updateCursor(cx, cy)
 	e.lastX = e.cursor.x
 }
 
-// CursorPgDn moves the cursor down a page.
-func (e *EditBox) CursorPgDn() {
+// CursorPageDown moves the cursor down a page.
+func (e *EditBox) CursorPageDown() {
 	cx, cy := e.lastX, e.cursor.y
 	cy += e.size.y - 1
 	if cy >= len(e.rows) {
 		cy = len(e.rows) - 1
 	}
 
-	cl := e.rowLen(cy)
-	if cx > cl {
-		cx = cl
+	rl := e.rowLen(cy)
+	if cx > rl {
+		cx = rl
 	}
 
 	e.updateCursor(cx, cy)
 }
 
-// CursorPgUp moves the cursor up a page.
-func (e *EditBox) CursorPgUp() {
+// CursorPageUp moves the cursor up a page.
+func (e *EditBox) CursorPageUp() {
 	cx, cy := e.lastX, e.cursor.y
 	cy -= e.size.y - 1
 	if cy < 0 {
 		cy = 0
 	}
 
-	cl := e.rowLen(cy)
-	if cx > cl {
-		cx = cl
+	rl := e.rowLen(cy)
+	if cx > rl {
+		cx = rl
 	}
 
 	e.updateCursor(cx, cy)
 }
 
-// SetCursor sets the position of the cursor within the view buffer. Negative
+// SetCursor sets the position of the cursor within the edit buffer. Negative
 // values position the cursor relative to the last column and row of the
 // buffer. A value of -1 for x indicates the end of the row. A value of -1
 // for y indicates the last row.
@@ -408,22 +430,21 @@ func (e *EditBox) SetCursor(x, y int) {
 		y = len(e.rows) - 1
 	}
 
-	cl := e.rowLen(y)
-
+	rl := e.rowLen(y)
 	if x < 0 {
-		x = cl + 1 + x
+		x = rl + 1 + x
 		if x < 0 {
 			x = 0
 		}
-	} else if x > cl {
-		x = cl
+	} else if x > rl {
+		x = rl
 	}
 
 	e.updateCursor(x, y)
 	e.lastX = e.cursor.x
 }
 
-// Cursor returns the cursor's current column and row within the view buffer.
+// Cursor returns the cursor's current column and row within the edit buffer.
 func (e *EditBox) Cursor() (x, y int) {
 	return e.cursor.x, e.cursor.y
 }
@@ -441,15 +462,45 @@ func (e *EditBox) View() (x, y int) {
 	return e.viewRect.x0, e.viewRect.y0
 }
 
-// Contents returns the entire contents of the EditBox buffer.
+// Contents returns the entire contents of the edit buffer.
 func (e *EditBox) Contents() string {
-	var rbuf = make([]byte, 4)
-	var buf []byte
+	return e.getContents(vec2{0, 0}, vec2{maxValue, maxValue})
+}
 
-	for i, n := 0, len(e.rows); i < n; i++ {
-		r := &e.rows[i]
-		for _, c := range r.cells {
-			sz := utf8.EncodeRune(rbuf, c.Ch)
+// getContents returns the contents of the edit buffer starting from
+// coordinate r0 and ending at coordinate r1 (x non-inclusive, y inclusive).
+func (e *EditBox) getContents(r0, r1 vec2) string {
+	var buf []byte
+	var rbuf [4]byte
+
+	rc := len(e.rows)
+
+	// First row
+	y := r0.y
+	if y < rc {
+		row := &e.rows[y]
+		for x, xmax := r0.x, len(row.cells); x < xmax; x++ {
+			sz := utf8.EncodeRune(rbuf[:], row.cells[x].Ch)
+			buf = append(buf, rbuf[:sz]...)
+		}
+		y++
+	}
+
+	// Middle rows
+	for ymax := min(rc, r1.y); y < ymax; y++ {
+		row := &e.rows[y]
+		for x, xmax := 0, len(row.cells); x < xmax; x++ {
+			sz := utf8.EncodeRune(rbuf[:], row.cells[x].Ch)
+			buf = append(buf, rbuf[:sz]...)
+		}
+	}
+
+	// Last row
+	if y < rc && y <= r1.y {
+		row := &e.rows[y]
+		Logf("y=%d xmax=%d\n", y, min(len(row.cells), r1.x+1))
+		for x, xmax := 0, min(len(row.cells), r1.x); x < xmax; x++ {
+			sz := utf8.EncodeRune(rbuf[:], row.cells[x].Ch)
 			buf = append(buf, rbuf[:sz]...)
 		}
 	}
@@ -497,12 +548,12 @@ func clearCells(c []tb.Cell) {
 // rowLen returns the length of a row, not including any terminating
 // newline character.
 func (e *EditBox) rowLen(y int) int {
-	cr := &e.rows[y]
-	l := len(cr.cells)
-	if l > 0 && cr.cells[l-1].Ch == charNewline {
-		return l - 1
+	row := &e.rows[y]
+	rl := len(row.cells)
+	if rl > 0 && row.cells[rl-1].Ch == charNewline {
+		return rl - 1
 	}
-	return l
+	return rl
 }
 
 // cellAtPos returns a pointer to a back-cuffer cell at the requested
@@ -511,27 +562,20 @@ func (e *EditBox) cellAtPos(x, y int) *tb.Cell {
 	if x < 0 || y < 0 || y >= len(e.rows) {
 		return nil
 	}
-	cr := &e.rows[y]
-	cl := e.rowLen(y)
-	if x >= cl {
+	row := &e.rows[y]
+	rl := e.rowLen(y)
+	if x >= rl {
 		return nil
 	}
 
-	return &cr.cells[x]
+	return &row.cells[x]
 }
 
 // updateDirtyRect adds a rectangle to the currently dirty rectangle. The
-// dirty rectangle is used to update the cell backbuffer the next time it is
-// drawn.
+// dirty rectangle is used to update the screen's backbuffer the next time it
+// is drawn.
 func (e *EditBox) updateDirtyRect(r rect) {
 	e.dirtyRect = union(e.dirtyRect, r)
-}
-
-// adjustCursor moves the cursor's x and y positions by the requested amount.
-// The values are not validated.
-func (e *EditBox) adjustCursor(dx, dy int) {
-	e.updateCursor(e.cursor.x+dx, e.cursor.y+dy)
-	e.updateView()
 }
 
 // updateCursor updates the position of the cursor. The new position is not
@@ -548,11 +592,13 @@ func (e *EditBox) updateCursor(cx, cy int) {
 // updateSelection updates the currently selected range of text in the edit
 // buffer.
 func (e *EditBox) updateSelection(x, y int) {
-	r0, r1 := rangeFromPos(vec2{x, y}, vec2{e.cursor.x, e.cursor.y})
+	r0, r1 := reorderRange(vec2{x, y}, vec2{e.cursor.x, e.cursor.y})
 	e.setCellAttribRange(r0, r1, tb.ColorBlack, tb.ColorWhite)
 }
 
-func rangeFromPos(r0, r1 vec2) (start, end vec2) {
+// reorderRange takes two buffer positions and orders them so that they are
+// in buffer order.
+func reorderRange(r0, r1 vec2) (start, end vec2) {
 	switch {
 	case r0.y < r1.y:
 		return r0, r1
@@ -572,9 +618,9 @@ func setCellAttrib(c *tb.Cell, fg, bg tb.Attribute) {
 func (e *EditBox) setCellAttribRange(r0, r1 vec2, fg, bg tb.Attribute) {
 	x, y := r0.x, r0.y
 	for ; y < r1.y; y++ {
-		cr := &e.rows[y]
-		for ; x < len(cr.cells); x++ {
-			setCellAttrib(&cr.cells[x], fg, bg)
+		row := &e.rows[y]
+		for ; x < len(row.cells); x++ {
+			setCellAttrib(&row.cells[x], fg, bg)
 		}
 		x = 0
 	}

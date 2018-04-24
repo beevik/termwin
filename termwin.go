@@ -38,7 +38,7 @@ func Flush() {
 	}
 
 	if c.focus != nil {
-		c.focus.onSetCursor()
+		c.focus.onPositionCursor()
 	}
 
 	tb.Flush()
