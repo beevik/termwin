@@ -31,6 +31,11 @@ const (
 	charBackspace = '\b'
 )
 
+var (
+	emptyCell   = tb.Cell{Ch: charSpace}
+	newlineCell = tb.Cell{Ch: charNewline}
+)
+
 type row struct {
 	cells []tb.Cell
 	flags byte
@@ -180,7 +185,7 @@ func (e *EditBox) InsertChar(ch rune) {
 			cr := &e.rows[cy]
 			nr := &e.rows[cy+1]
 			nr.cells = append(nr.cells, cr.cells[cx:]...)
-			cr.cells = cr.cells[:cx]
+			cr.cells = append(cr.cells[:cx], newlineCell)
 			e.updateDirtyRect(rect{cx, cy, maxValue, cy + 1})
 
 		case charLinefeed:
@@ -190,9 +195,7 @@ func (e *EditBox) InsertChar(ch rune) {
 	default:
 		cr := &e.rows[cy]
 		cr.grow(1)
-		if cx <= len(cr.cells) {
-			copy(cr.cells[cx+1:], cr.cells[cx:])
-		}
+		copy(cr.cells[cx+1:], cr.cells[cx:])
 		cr.cells[cx] = tb.Cell{Ch: ch}
 		e.updateDirtyRect(rect{cx, cy, maxValue, cy + 1})
 		e.adjustCursor(+1, 0)
@@ -223,13 +226,14 @@ func (e *EditBox) InsertRow() {
 // DeleteChar deletes a single character at the current cursor position.
 func (e *EditBox) DeleteChar() {
 	cx, cy := e.cursor.x, e.cursor.y
+	cl := e.rowLen(cy)
 	cr := &e.rows[cy]
 
 	// At end of line? Merge lines.
-	if cx >= len(cr.cells) {
+	if cx >= cl {
 		if cy+1 < len(e.rows) {
 			nr := &e.rows[cy+1]
-			cr.cells = append(cr.cells, nr.cells...)
+			cr.cells = append(cr.cells[:cl], nr.cells...)
 			e.rows = append(e.rows[:cy+1], e.rows[cy+2:]...)
 			e.updateDirtyRect(rect{0, cy, maxValue, maxValue})
 		}
@@ -287,8 +291,7 @@ func (e *EditBox) EndOfRow(y int) int {
 	if y >= len(e.rows) {
 		return -1
 	}
-	row := &e.rows[y]
-	return len(row.cells)
+	return e.rowLen(y)
 }
 
 // Size returns the width and height of the EditBox on screen.
@@ -303,8 +306,7 @@ func (e *EditBox) CursorLeft() {
 		e.adjustCursor(-1, 0)
 	} else if e.cursor.y > 0 {
 		cy := e.cursor.y - 1
-		cr := &e.rows[cy]
-		cx := len(cr.cells)
+		cx := e.rowLen(cy)
 		e.updateCursor(cx, cy)
 	}
 	e.lastX = e.cursor.x
@@ -314,8 +316,8 @@ func (e *EditBox) CursorLeft() {
 // is at the right-most column of the current line.
 func (e *EditBox) CursorRight() {
 	cx, cy := e.cursor.x, e.cursor.y
-	cr := &e.rows[cy]
-	if cx < len(cr.cells) {
+	rl := e.rowLen(cy)
+	if cx < rl {
 		e.adjustCursor(+1, 0)
 	} else if cy+1 < len(e.rows) {
 		e.updateCursor(0, cy+1)
@@ -327,9 +329,9 @@ func (e *EditBox) CursorRight() {
 func (e *EditBox) CursorDown() {
 	if e.cursor.y+1 < len(e.rows) {
 		cx, cy := e.lastX, e.cursor.y+1
-		cr := &e.rows[cy]
-		if cx > len(cr.cells) {
-			cx = len(cr.cells)
+		cl := e.rowLen(cy)
+		if cx > cl {
+			cx = cl
 		}
 		e.updateCursor(cx, cy)
 	}
@@ -339,9 +341,9 @@ func (e *EditBox) CursorDown() {
 func (e *EditBox) CursorUp() {
 	if e.cursor.y > 0 {
 		cx, cy := e.lastX, e.cursor.y-1
-		cr := &e.rows[cy]
-		if cx > len(cr.cells) {
-			cx = len(cr.cells)
+		cl := e.rowLen(cy)
+		if cx > cl {
+			cx = cl
 		}
 		e.updateCursor(cx, cy)
 	}
@@ -368,9 +370,9 @@ func (e *EditBox) CursorPgDn() {
 		cy = len(e.rows) - 1
 	}
 
-	cr := &e.rows[cy]
-	if cx > len(cr.cells) {
-		cx = len(cr.cells)
+	cl := e.rowLen(cy)
+	if cx > cl {
+		cx = cl
 	}
 
 	e.updateCursor(cx, cy)
@@ -384,9 +386,9 @@ func (e *EditBox) CursorPgUp() {
 		cy = 0
 	}
 
-	cr := &e.rows[cy]
-	if cx > len(cr.cells) {
-		cx = len(cr.cells)
+	cl := e.rowLen(cy)
+	if cx > cl {
+		cx = cl
 	}
 
 	e.updateCursor(cx, cy)
@@ -406,15 +408,15 @@ func (e *EditBox) SetCursor(x, y int) {
 		y = len(e.rows) - 1
 	}
 
-	cr := &e.rows[y]
+	cl := e.rowLen(y)
 
 	if x < 0 {
-		x = len(e.rows[y].cells) + 1 + x
+		x = cl + 1 + x
 		if x < 0 {
 			x = 0
 		}
-	} else if x > len(cr.cells) {
-		x = len(cr.cells)
+	} else if x > cl {
+		x = cl
 	}
 
 	e.updateCursor(x, y)
@@ -444,20 +446,13 @@ func (e *EditBox) Contents() string {
 	var rbuf = make([]byte, 4)
 	var buf []byte
 
-	encodeRow := func(i int) {
+	for i, n := 0, len(e.rows); i < n; i++ {
 		r := &e.rows[i]
 		for _, c := range r.cells {
 			sz := utf8.EncodeRune(rbuf, c.Ch)
 			buf = append(buf, rbuf[:sz]...)
 		}
 	}
-
-	i := 0
-	for n := len(e.rows) - 1; i < n; i++ {
-		encodeRow(i)
-		buf = append(buf, charNewline)
-	}
-	encodeRow(i)
 
 	return string(buf)
 }
@@ -493,8 +488,6 @@ func (e *EditBox) Draw() {
 	e.dirtyRect = emptyRect
 }
 
-var emptyCell = tb.Cell{Ch: charSpace}
-
 func clearCells(c []tb.Cell) {
 	for i := range c {
 		c[i] = emptyCell
@@ -519,7 +512,8 @@ func (e *EditBox) cellAtPos(x, y int) *tb.Cell {
 		return nil
 	}
 	cr := &e.rows[y]
-	if x >= len(cr.cells) {
+	cl := e.rowLen(y)
+	if x >= cl {
 		return nil
 	}
 
