@@ -25,9 +25,10 @@ const (
 )
 
 const (
-	charNewline   rune = '\n'
-	charLinefeed  rune = '\r'
-	charBackspace rune = '\b'
+	charSpace     = ' '
+	charNewline   = '\n'
+	charLinefeed  = '\r'
+	charBackspace = '\b'
 )
 
 type row struct {
@@ -54,24 +55,43 @@ func (r *row) grow(n int) {
 // An EditBox represents a editable text control with fixed screen dimensions.
 type EditBox struct {
 	flags        EditBoxFlags
-	size         vec2        // dimensions of the edit box
-	screenCorner vec2        // screen coordinate of top-left corner
-	viewRect     rect        // buffer currently visible
-	dirtyRect    rect        // portions of the buffer that have been updated
-	rows         []row       // all rows in the buffer
-	cursor       vec2        // current cursor position
-	mod          tb.Modifier // currently active modifier keys
-	selectStart  vec2        // selection beginning
-	selectStop   vec2        // selection end
+	size         vec2  // dimensions of the edit box
+	screenCorner vec2  // screen coordinate of top-left corner
+	viewRect     rect  // buffer currently visible
+	dirtyRect    rect  // portions of the buffer that have been updated
+	rows         []row // all rows in the buffer
+	cursor       vec2  // current cursor position
+	lastX        int   // cursor X position after last horz move
+	selecting    bool  // cursor in selecting mode
+	selectStart  vec2  // selection beginning
 }
+
+// store a newline "blank" at the end of the row
+
+// selection mechanics:
+// - If a cursor movement key is pressed:
+//   - If shift is down and selecting is false:
+//     - store cursor position as selectStart
+//     - update cursor and selection
+//   - If shift is down and selecting is true:
+//     - update cursor and selection
+//   - If shift is up and selecting is false:
+//     - update cursor
+//   - If shift is up and selecting is true:
+//     - clear selection
+//     - update cursor
+//     - set selecting to false
+//   - If text key is pressed and selecting is true:
+//     - delete selection
+//     - insert key
 
 func (e *EditBox) onDraw() {
 	e.Draw()
 }
 
 func (e *EditBox) onKey(ev tb.Event) {
-	cx, cy := e.cursor.x, e.cursor.y
-	e.mod = ev.Mod
+	e.selecting = (ev.Mod & tb.ModShift) != 0
+
 	switch ev.Key {
 	case tb.KeyArrowLeft, tb.KeyCtrlB:
 		e.CursorLeft()
@@ -82,21 +102,21 @@ func (e *EditBox) onKey(ev tb.Event) {
 	case tb.KeyArrowDown:
 		e.CursorDown()
 	case tb.KeyHome, tb.KeyCtrlA:
-		e.updateCursor(0, cy)
+		e.CursorHome()
 	case tb.KeyEnd, tb.KeyCtrlE:
-		e.updateCursor(e.EndOfRow(cy), cy)
+		e.CursorEnd()
 	case tb.KeyPgdn:
-		e.SetCursor(cx, cy+e.size.y)
+		e.CursorPgDn()
 	case tb.KeyPgup:
-		e.SetCursor(cx, max(cy-e.size.y, 0))
+		e.CursorPgUp()
 	case tb.KeyDelete, tb.KeyCtrlD:
 		e.DeleteChar()
 	case tb.KeyBackspace, tb.KeyBackspace2:
 		e.DeleteCharLeft()
 	case tb.KeySpace:
-		e.InsertChar(' ')
+		e.InsertChar(charSpace)
 	case tb.KeyEnter:
-		e.InsertChar('\n')
+		e.InsertChar(charNewline)
 	default:
 		if ev.Ch == '`' {
 			Logln(e.Contents())
@@ -109,9 +129,9 @@ func (e *EditBox) onKey(ev tb.Event) {
 }
 
 func (e *EditBox) onSetCursor() {
-	x := e.cursor.x - e.viewRect.x0 + e.screenCorner.x
-	y := e.cursor.y - e.viewRect.y0 + e.screenCorner.y
-	tb.SetCursor(x, y)
+	cx := e.cursor.x - e.viewRect.x0 + e.screenCorner.x
+	cy := e.cursor.y - e.viewRect.y0 + e.screenCorner.y
+	tb.SetCursor(cx, cy)
 }
 
 // NewEditBox creates a new EditBox control with the specified screen
@@ -177,6 +197,8 @@ func (e *EditBox) InsertChar(ch rune) {
 		e.updateDirtyRect(rect{cx, cy, maxValue, cy + 1})
 		e.adjustCursor(+1, 0)
 	}
+
+	e.lastX = e.cursor.x
 }
 
 // InsertString inserts an entire string at the current cursor position
@@ -204,7 +226,7 @@ func (e *EditBox) DeleteChar() {
 	cr := &e.rows[cy]
 
 	// At end of line? Merge lines.
-	if e.cursor.x >= len(cr.cells) {
+	if cx >= len(cr.cells) {
 		if cy+1 < len(e.rows) {
 			nr := &e.rows[cy+1]
 			cr.cells = append(cr.cells, nr.cells...)
@@ -280,46 +302,94 @@ func (e *EditBox) CursorLeft() {
 	if e.cursor.x > 0 {
 		e.adjustCursor(-1, 0)
 	} else if e.cursor.y > 0 {
-		y := e.cursor.y - 1
-		r := &e.rows[y]
-		x := len(r.cells)
-		e.updateCursor(x, y)
+		cy := e.cursor.y - 1
+		cr := &e.rows[cy]
+		cx := len(cr.cells)
+		e.updateCursor(cx, cy)
 	}
+	e.lastX = e.cursor.x
 }
 
 // CursorRight moves the cursor right, shifting to the next line if the cursor
 // is at the right-most column of the current line.
 func (e *EditBox) CursorRight() {
-	r := &e.rows[e.cursor.y]
-	if e.cursor.x < len(r.cells) {
+	cx, cy := e.cursor.x, e.cursor.y
+	cr := &e.rows[cy]
+	if cx < len(cr.cells) {
 		e.adjustCursor(+1, 0)
-	} else if e.cursor.y+1 < len(e.rows) {
-		e.updateCursor(0, e.cursor.y+1)
+	} else if cy+1 < len(e.rows) {
+		e.updateCursor(0, cy+1)
 	}
+	e.lastX = e.cursor.x
 }
 
 // CursorDown moves the cursor down a line.
 func (e *EditBox) CursorDown() {
 	if e.cursor.y+1 < len(e.rows) {
-		x, y := e.cursor.x, e.cursor.y+1
-		r := &e.rows[y]
-		if x > len(r.cells) {
-			x = len(r.cells)
+		cx, cy := e.lastX, e.cursor.y+1
+		cr := &e.rows[cy]
+		if cx > len(cr.cells) {
+			cx = len(cr.cells)
 		}
-		e.updateCursor(x, y)
+		e.updateCursor(cx, cy)
 	}
 }
 
 // CursorUp moves the cursor up a line.
 func (e *EditBox) CursorUp() {
 	if e.cursor.y > 0 {
-		x, y := e.cursor.x, e.cursor.y-1
-		r := &e.rows[y]
-		if x > len(r.cells) {
-			x = len(r.cells)
+		cx, cy := e.lastX, e.cursor.y-1
+		cr := &e.rows[cy]
+		if cx > len(cr.cells) {
+			cx = len(cr.cells)
 		}
-		e.updateCursor(x, y)
+		e.updateCursor(cx, cy)
 	}
+}
+
+// CursorHome moves the cursor to the start of the current line.
+func (e *EditBox) CursorHome() {
+	e.updateCursor(0, e.cursor.y)
+	e.lastX = e.cursor.x
+}
+
+// CursorEnd moves the cursor to the end of the current line.
+func (e *EditBox) CursorEnd() {
+	cy := e.cursor.y
+	e.updateCursor(e.EndOfRow(cy), cy)
+	e.lastX = e.cursor.x
+}
+
+// CursorPgDn moves the cursor down a page.
+func (e *EditBox) CursorPgDn() {
+	cx, cy := e.lastX, e.cursor.y
+	cy += e.size.y - 1
+	if cy >= len(e.rows) {
+		cy = len(e.rows) - 1
+	}
+
+	cr := &e.rows[cy]
+	if cx > len(cr.cells) {
+		cx = len(cr.cells)
+	}
+
+	e.updateCursor(cx, cy)
+}
+
+// CursorPgUp moves the cursor up a page.
+func (e *EditBox) CursorPgUp() {
+	cx, cy := e.lastX, e.cursor.y
+	cy -= e.size.y - 1
+	if cy < 0 {
+		cy = 0
+	}
+
+	cr := &e.rows[cy]
+	if cx > len(cr.cells) {
+		cx = len(cr.cells)
+	}
+
+	e.updateCursor(cx, cy)
 }
 
 // SetCursor sets the position of the cursor within the view buffer. Negative
@@ -348,6 +418,7 @@ func (e *EditBox) SetCursor(x, y int) {
 	}
 
 	e.updateCursor(x, y)
+	e.lastX = e.cursor.x
 }
 
 // Cursor returns the cursor's current column and row within the view buffer.
@@ -384,7 +455,7 @@ func (e *EditBox) Contents() string {
 	i := 0
 	for n := len(e.rows) - 1; i < n; i++ {
 		encodeRow(i)
-		buf = append(buf, '\n')
+		buf = append(buf, charNewline)
 	}
 	encodeRow(i)
 
@@ -422,7 +493,7 @@ func (e *EditBox) Draw() {
 	e.dirtyRect = emptyRect
 }
 
-var emptyCell = tb.Cell{Ch: ' '}
+var emptyCell = tb.Cell{Ch: charSpace}
 
 func clearCells(c []tb.Cell) {
 	for i := range c {
@@ -430,6 +501,19 @@ func clearCells(c []tb.Cell) {
 	}
 }
 
+// rowLen returns the length of a row, not including any terminating
+// newline character.
+func (e *EditBox) rowLen(y int) int {
+	cr := &e.rows[y]
+	l := len(cr.cells)
+	if l > 0 && cr.cells[l-1].Ch == charNewline {
+		return l - 1
+	}
+	return l
+}
+
+// cellAtPos returns a pointer to a back-cuffer cell at the requested
+// position.
 func (e *EditBox) cellAtPos(x, y int) *tb.Cell {
 	if x < 0 || y < 0 || y >= len(e.rows) {
 		return nil
@@ -442,13 +526,36 @@ func (e *EditBox) cellAtPos(x, y int) *tb.Cell {
 	return &cr.cells[x]
 }
 
+// updateDirtyRect adds a rectangle to the currently dirty rectangle. The
+// dirty rectangle is used to update the cell backbuffer the next time it is
+// drawn.
 func (e *EditBox) updateDirtyRect(r rect) {
 	e.dirtyRect = union(e.dirtyRect, r)
 }
 
+// adjustCursor moves the cursor's x and y positions by the requested amount.
+// The values are not validated.
 func (e *EditBox) adjustCursor(dx, dy int) {
 	e.updateCursor(e.cursor.x+dx, e.cursor.y+dy)
 	e.updateView()
+}
+
+// updateCursor updates the position of the cursor. The new position is not
+// validated.
+func (e *EditBox) updateCursor(cx, cy int) {
+	if e.selecting {
+		e.updateSelection(cx, cy)
+	}
+
+	e.cursor.x, e.cursor.y = cx, cy
+	e.updateView()
+}
+
+// updateSelection updates the currently selected range of text in the edit
+// buffer.
+func (e *EditBox) updateSelection(x, y int) {
+	r0, r1 := rangeFromPos(vec2{x, y}, vec2{e.cursor.x, e.cursor.y})
+	e.setCellAttribRange(r0, r1, tb.ColorBlack, tb.ColorWhite)
 }
 
 func rangeFromPos(r0, r1 vec2) (start, end vec2) {
@@ -469,48 +576,23 @@ func setCellAttrib(c *tb.Cell, fg, bg tb.Attribute) {
 }
 
 func (e *EditBox) setCellAttribRange(r0, r1 vec2, fg, bg tb.Attribute) {
-	Logf("sca (%d,%d) (%d,%d)\n", r0.x, r0.y, r1.x, r1.y)
-
 	x, y := r0.x, r0.y
 	for ; y < r1.y; y++ {
 		cr := &e.rows[y]
 		for ; x < len(cr.cells); x++ {
-			Logf("SC1 (%d,%d)\n", x, y)
 			setCellAttrib(&cr.cells[x], fg, bg)
 		}
 		x = 0
 	}
 	for ; x < r1.x; x++ {
-		Logf("SC2 (%d,%d)\n", x, y)
 		setCellAttrib(e.cellAtPos(x, y), fg, bg)
 	}
 
 	e.updateDirtyRect(rect{0, r0.y, maxValue, r1.y + 1})
 }
 
-func (e *EditBox) updateCursor(x, y int) {
-	if (e.mod & tb.ModShift) != 0 {
-		r0, r1 := rangeFromPos(vec2{x, y}, vec2{e.cursor.x, e.cursor.y})
-		e.setCellAttribRange(r0, r1, tb.ColorBlack, tb.ColorWhite)
-	}
-
-	e.cursor.x, e.cursor.y = x, y
-	e.updateView()
-}
-
-func (e *EditBox) updateSelection(cx, cy int) {
-	if cx == e.cursor.x && cy == e.cursor.y {
-		return
-	}
-
-	c := e.cellAtPos(cx, cy)
-	if c == nil {
-		return
-	}
-
-	c.Fg, c.Bg = tb.ColorBlack, tb.ColorWhite
-}
-
+// updateView uses the current cursor position to make sure the text under
+// the cursor is visible.
 func (e *EditBox) updateView() {
 	switch {
 	case e.cursor.x >= e.viewRect.x1:

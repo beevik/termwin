@@ -21,10 +21,24 @@ func main() {
 
 	editbox.InsertString("foobar01234567890")
 	editbox.SetCursor(0, 0)
-	editbox.InsertString("\ntest\na\nb\nc\nd\n")
+	editbox.InsertString("test\na\nb\nc\nd\n")
 	editbox.SetCursor(-1, -1)
-	editbox.InsertString("lalala")
-	editbox.SetCursor(0, 1)
+	editbox.InsertString("lalala\n")
+	editbox.InsertString("fofofo\n")
+	editbox.InsertString("fofofo\n")
+	editbox.InsertString("fofofo\n")
+	editbox.InsertString("fofofo\n")
+	editbox.InsertString("fofofo\n")
+	editbox.InsertString("fofofo\n")
+	editbox.InsertString("babababa\n")
+	editbox.InsertString("babababa\n")
+	editbox.InsertString("babababa\n")
+	editbox.InsertString("babababa\n")
+	editbox.InsertString("babababa\n")
+	editbox.InsertString("babababa\n")
+	editbox.InsertString("babababa\n")
+
+	editbox.SetCursor(0, 0)
 	//editbox.Draw()
 
 	for {

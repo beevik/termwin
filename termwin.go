@@ -92,14 +92,18 @@ var escSeq = map[string]keymod{
 	"1;5A": {tb.KeyArrowUp, tb.ModCtrl},
 	"1;2B": {tb.KeyArrowDown, tb.ModShift},
 	"1;5B": {tb.KeyArrowDown, tb.ModCtrl},
-	"5;5~": {tb.KeyPgup, tb.ModShift},
-	"5;2~": {tb.KeyPgup, tb.ModCtrl},
-	"6;5~": {tb.KeyPgdn, tb.ModShift},
-	"6;2~": {tb.KeyPgdn, tb.ModCtrl},
+	"1;2F": {tb.KeyEnd, tb.ModShift},
+	"1;5F": {tb.KeyEnd, tb.ModCtrl},
+	"1;2H": {tb.KeyHome, tb.ModShift},
+	"1;5H": {tb.KeyHome, tb.ModCtrl},
+	"5;2~": {tb.KeyPgup, tb.ModShift},
+	"5;5~": {tb.KeyPgup, tb.ModCtrl},
+	"6;2~": {tb.KeyPgdn, tb.ModShift},
+	"6;5~": {tb.KeyPgdn, tb.ModCtrl},
 }
 
 func handleEscSeq(ev *tb.Event) {
-	Logln(string(c.kb))
 	s := escSeq[string(c.kb)]
 	ev.Ch, ev.Key, ev.Mod = 0, s.Key, s.Mod
+	Logf("%s => %d,%d\n", string(c.kb), ev.Key, ev.Mod)
 }
