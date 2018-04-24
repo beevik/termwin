@@ -10,7 +10,7 @@
 		},
 		{
 			"ImportPath": "github.com/nsf/termbox-go",
-			"Rev": "e2050e41c8847748ec5288741c0b19a8cb26d084"
+			"Rev": "7cbfaac9e282b3ea0cefeddc67b2c3ed3aaf97bc"
 		}
 	]
 }
