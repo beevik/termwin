@@ -7,8 +7,76 @@ const (
 
 var emptyRect = rect{maxValue, maxValue, minValue, minValue}
 
-type vec2 struct {
+type coord struct {
 	x, y int
+}
+
+func (c coord) equals(c2 coord) bool {
+	return c.y == c2.y && c.x == c2.x
+}
+
+func (c coord) lessThan(c2 coord) bool {
+	switch {
+	case c.y < c2.y:
+		return true
+	case c.y > c2.y:
+		return false
+	default:
+		return c.x < c2.x
+	}
+}
+
+func (c coord) lessThanOrEqual(c2 coord) bool {
+	switch {
+	case c.y < c2.y:
+		return true
+	case c.y > c2.y:
+		return false
+	default:
+		return c.x <= c2.x
+	}
+}
+
+func (c coord) greaterThan(c2 coord) bool {
+	switch {
+	case c.y > c2.y:
+		return true
+	case c.y < c2.y:
+		return false
+	default:
+		return c.x > c2.x
+	}
+}
+
+func (c coord) greaterThanOrEqual(c2 coord) bool {
+	switch {
+	case c.y > c2.y:
+		return true
+	case c.y < c2.y:
+		return false
+	default:
+		return c.x >= c2.x
+	}
+}
+
+func (c coord) inRange(r crange) bool {
+	return c.lessThan(r.c1) && c.greaterThanOrEqual(r.c0)
+}
+
+type crange struct {
+	c0 coord
+	c1 coord
+}
+
+func (r crange) empty() bool {
+	return r.c0.equals(r.c1)
+}
+
+func (r crange) ordered() crange {
+	if r.c0.greaterThan(r.c1) {
+		return crange{r.c1, r.c0}
+	}
+	return r
 }
 
 type rect struct {

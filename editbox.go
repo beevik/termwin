@@ -60,15 +60,15 @@ func (r *row) grow(n int) {
 // An EditBox represents a editable text control with fixed screen dimensions.
 type EditBox struct {
 	flags        EditBoxFlags
-	size         vec2  // dimensions of the edit box
-	screenCorner vec2  // screen coordinate of top-left corner
-	viewRect     rect  // portion of edit buffer currently visible
-	dirtyRect    rect  // portions of the edit buffer that have been updated
-	rows         []row // all rows in the edit buffer
-	cursor       vec2  // current cursor position
-	lastX        int   // cursor X position after last horz move
-	selecting    bool  // cursor in selecting mode
-	selectStart  vec2  // selection beginning
+	size         coord  // dimensions of the edit box
+	screenCorner coord  // screen coordinate of top-left corner
+	viewRect     rect   // portion of edit buffer currently visible
+	dirtyRect    rect   // portions of the edit buffer that have been updated
+	rows         []row  // all rows in the edit buffer
+	cursor       coord  // current cursor position
+	lastX        int    // cursor X position after last horz move
+	selecting    bool   // cursor in selecting mode
+	selection    crange // current selection range
 }
 
 // selection mechanics:
@@ -147,8 +147,8 @@ func (e *EditBox) onPositionCursor() {
 func NewEditBox(x, y, width, height int, flags EditBoxFlags) *EditBox {
 	e := &EditBox{
 		flags:        flags,
-		size:         vec2{width, height},
-		screenCorner: vec2{x, y},
+		size:         coord{width, height},
+		screenCorner: coord{x, y},
 		viewRect:     newRect(0, 0, width, height),
 		dirtyRect:    rect{0, 0, maxValue, maxValue},
 		rows:         []row{newRow(width)},
@@ -179,16 +179,13 @@ func (e *EditBox) InsertChar(ch rune) {
 	switch {
 	case ch < 32:
 		switch ch {
-		case charBackspace:
-			e.updateCursor(max(cx-1, 0), cy)
-
 		case charNewline:
 			e.updateCursor(0, cy+1)
 			e.InsertRow()
 			currRow := &e.rows[cy]
 			nextRow := &e.rows[cy+1]
 			nextRow.cells = append(nextRow.cells, currRow.cells[cx:]...)
-			currRow.cells = append(currRow.cells[:cx], newlineCell)
+			currRow.cells = append(currRow.cells[:cx], emptyCell)
 			e.updateDirtyRect(rect{cx, cy, maxValue, cy + 1})
 
 		case charLinefeed:
@@ -289,35 +286,79 @@ func (e *EditBox) Size() (width, height int) {
 	return e.size.x, e.size.y
 }
 
+// Selection returns the contents of the substring currently selected in the
+// edit buffer.
+func (e *EditBox) Selection() string {
+	if e.selecting {
+		return e.getRange(e.selection.ordered())
+	}
+	return ""
+}
+
 // SelectionStart starts a selection beginning at the current cursor position.
 // Any previously selected characters will be unselected.
 func (e *EditBox) SelectionStart() {
 	// TODO: do unselection
-	e.selecting, e.selectStart = true, e.cursor
+	e.selection.c0 = e.cursor
+	e.selection.c1 = e.cursor
+	e.selecting = true
 }
 
 // SelectionStop ends the current selection and returns the string covered by
 // the selection.
 func (e *EditBox) SelectionStop() string {
-	s := e.SelectionGet()
-	if s == "" {
-		return s
-	}
-
-	// TODO: do unselection
-	e.selecting, e.selectStart = false, vec2{}
-	return s
-}
-
-// SelectionGet returns the contents of the substring currently selected in
-// the edit buffer.
-func (e *EditBox) SelectionGet() string {
 	if !e.selecting {
 		return ""
 	}
 
-	r0, r1 := reorderRange(e.selectStart, e.cursor)
-	return e.getContents(r0, r1)
+	s := e.getRange(e.selection.ordered())
+
+	// TODO: do unselection
+	e.selection.c0 = coord{}
+	e.selection.c1 = coord{}
+	e.selecting = false
+
+	return s
+}
+
+// SelectionDelete deletes the current selection from the edit buffer.
+func (e *EditBox) SelectionDelete() {
+	if e.selecting {
+		e.deleteRange(e.selection.ordered())
+	}
+}
+
+// Cursor returns the cursor's current column and row within the edit buffer.
+func (e *EditBox) Cursor() (x, y int) {
+	return e.cursor.x, e.cursor.y
+}
+
+// CursorSet sets the position of the cursor within the edit buffer. Negative
+// values position the cursor relative to the last column and row of the
+// buffer. A value of -1 for x indicates the end of the row. A value of -1
+// for y indicates the last row.
+func (e *EditBox) CursorSet(x, y int) {
+	if y < 0 {
+		y = len(e.rows) + y
+		if y < 0 {
+			y = 0
+		}
+	} else if y >= len(e.rows) {
+		y = len(e.rows) - 1
+	}
+
+	rl := e.rowLen(y)
+	if x < 0 {
+		x = rl + 1 + x
+		if x < 0 {
+			x = 0
+		}
+	} else if x > rl {
+		x = rl
+	}
+
+	e.updateCursor(x, y)
+	e.lastX = e.cursor.x
 }
 
 // CursorLeft moves the cursor left, shifting to the end of the previous line
@@ -416,37 +457,10 @@ func (e *EditBox) CursorPageUp() {
 	e.updateCursor(cx, cy)
 }
 
-// SetCursor sets the position of the cursor within the edit buffer. Negative
-// values position the cursor relative to the last column and row of the
-// buffer. A value of -1 for x indicates the end of the row. A value of -1
-// for y indicates the last row.
-func (e *EditBox) SetCursor(x, y int) {
-	if y < 0 {
-		y = len(e.rows) + y
-		if y < 0 {
-			y = 0
-		}
-	} else if y >= len(e.rows) {
-		y = len(e.rows) - 1
-	}
-
-	rl := e.rowLen(y)
-	if x < 0 {
-		x = rl + 1 + x
-		if x < 0 {
-			x = 0
-		}
-	} else if x > rl {
-		x = rl
-	}
-
-	e.updateCursor(x, y)
-	e.lastX = e.cursor.x
-}
-
-// Cursor returns the cursor's current column and row within the edit buffer.
-func (e *EditBox) Cursor() (x, y int) {
-	return e.cursor.x, e.cursor.y
+// View returns the buffer position currently representing the top-left
+// corner of the visible EditBox.
+func (e *EditBox) View() (x, y int) {
+	return e.viewRect.x0, e.viewRect.y0
 }
 
 // SetView adjusts the buffer position currently representing the top-left
@@ -456,30 +470,28 @@ func (e *EditBox) SetView(x, y int) {
 	e.updateDirtyRect(e.viewRect)
 }
 
-// View returns the buffer position currently representing the top-left
-// corner of the visible EditBox.
-func (e *EditBox) View() (x, y int) {
-	return e.viewRect.x0, e.viewRect.y0
-}
-
 // Contents returns the entire contents of the edit buffer.
 func (e *EditBox) Contents() string {
-	return e.getContents(vec2{0, 0}, vec2{maxValue, maxValue})
+	r := crange{
+		c0: coord{0, 0},
+		c1: coord{maxValue, maxValue},
+	}
+	return e.getRange(r)
 }
 
-// getContents returns the contents of the edit buffer starting from
-// coordinate r0 and ending at coordinate r1 (x non-inclusive, y inclusive).
-func (e *EditBox) getContents(r0, r1 vec2) string {
+// getRange returns the contents of the edit buffer covering the specified
+// range.
+func (e *EditBox) getRange(r crange) string {
 	var buf []byte
 	var rbuf [4]byte
 
-	rc := len(e.rows)
+	rmax := len(e.rows)
 
 	// First row
-	y := r0.y
-	if y < rc {
+	y := r.c0.y
+	if y < rmax {
 		row := &e.rows[y]
-		for x, xmax := r0.x, len(row.cells); x < xmax; x++ {
+		for x, xmax := r.c0.x, len(row.cells); x < xmax; x++ {
 			sz := utf8.EncodeRune(rbuf[:], row.cells[x].Ch)
 			buf = append(buf, rbuf[:sz]...)
 		}
@@ -487,7 +499,7 @@ func (e *EditBox) getContents(r0, r1 vec2) string {
 	}
 
 	// Middle rows
-	for ymax := min(rc, r1.y); y < ymax; y++ {
+	for ymax := min(rmax, r.c1.y); y < ymax; y++ {
 		row := &e.rows[y]
 		for x, xmax := 0, len(row.cells); x < xmax; x++ {
 			sz := utf8.EncodeRune(rbuf[:], row.cells[x].Ch)
@@ -496,16 +508,27 @@ func (e *EditBox) getContents(r0, r1 vec2) string {
 	}
 
 	// Last row
-	if y < rc && y <= r1.y {
+	if y < rmax && y <= r.c1.y {
 		row := &e.rows[y]
-		Logf("y=%d xmax=%d\n", y, min(len(row.cells), r1.x+1))
-		for x, xmax := 0, min(len(row.cells), r1.x); x < xmax; x++ {
+		for x, xmax := 0, min(len(row.cells), r.c1.x); x < xmax; x++ {
 			sz := utf8.EncodeRune(rbuf[:], row.cells[x].Ch)
 			buf = append(buf, rbuf[:sz]...)
 		}
 	}
 
 	return string(buf)
+}
+
+// deleteRange removes the range of text from the edit buffer.
+func (e *EditBox) deleteRange(r crange) {
+	inRange := e.cursor.inRange(r)
+
+	// TODO: write this
+
+	if inRange {
+		e.cursor = r.c0
+		e.updateView()
+	}
 }
 
 // Draw updates the contents of the EditBox on the screen.
@@ -550,7 +573,7 @@ func clearCells(c []tb.Cell) {
 func (e *EditBox) rowLen(y int) int {
 	row := &e.rows[y]
 	rl := len(row.cells)
-	if rl > 0 && row.cells[rl-1].Ch == charNewline {
+	if rl > 0 && y < len(e.rows)-1 {
 		return rl - 1
 	}
 	return rl
@@ -592,43 +615,31 @@ func (e *EditBox) updateCursor(cx, cy int) {
 // updateSelection updates the currently selected range of text in the edit
 // buffer.
 func (e *EditBox) updateSelection(x, y int) {
-	r0, r1 := reorderRange(vec2{x, y}, vec2{e.cursor.x, e.cursor.y})
-	e.setCellAttribRange(r0, r1, tb.ColorBlack, tb.ColorWhite)
-}
-
-// reorderRange takes two buffer positions and orders them so that they are
-// in buffer order.
-func reorderRange(r0, r1 vec2) (start, end vec2) {
-	switch {
-	case r0.y < r1.y:
-		return r0, r1
-	case r0.y > r1.y:
-		return r1, r0
-	case r0.x < r1.x:
-		return r0, r1
-	default:
-		return r1, r0
+	r := crange{
+		c0: coord{x, y},
+		c1: e.cursor,
 	}
+	e.setCellAttribRange(r.ordered(), tb.ColorBlack, tb.ColorWhite)
 }
 
-func setCellAttrib(c *tb.Cell, fg, bg tb.Attribute) {
-	c.Fg, c.Bg = fg, bg
-}
-
-func (e *EditBox) setCellAttribRange(r0, r1 vec2, fg, bg tb.Attribute) {
-	x, y := r0.x, r0.y
-	for ; y < r1.y; y++ {
+func (e *EditBox) setCellAttribRange(r crange, fg, bg tb.Attribute) {
+	x, y := r.c0.x, r.c0.y
+	for ; y < r.c1.y; y++ {
 		row := &e.rows[y]
 		for ; x < len(row.cells); x++ {
 			setCellAttrib(&row.cells[x], fg, bg)
 		}
 		x = 0
 	}
-	for ; x < r1.x; x++ {
+	for ; x < r.c1.x; x++ {
 		setCellAttrib(e.cellAtPos(x, y), fg, bg)
 	}
 
-	e.updateDirtyRect(rect{0, r0.y, maxValue, r1.y + 1})
+	e.updateDirtyRect(rect{0, r.c0.y, maxValue, r.c1.y + 1})
+}
+
+func setCellAttrib(c *tb.Cell, fg, bg tb.Attribute) {
+	c.Fg, c.Bg = fg, bg
 }
 
 // updateView uses the current cursor position to make sure the text under

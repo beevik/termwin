@@ -18,9 +18,9 @@ func main() {
 	editbox := termwin.NewEditBox(25, 8, 16, 10, termwin.EditBoxWordWrap)
 
 	editbox.InsertString("foobar01234567890")
-	editbox.SetCursor(0, 0)
+	editbox.CursorSet(0, 0)
 	editbox.InsertString("test\na\nb\nc\nd\n")
-	editbox.SetCursor(-1, -1)
+	editbox.CursorSet(-1, -1)
 	editbox.InsertString("lalala\n")
 	editbox.InsertString("fofofo\n")
 	editbox.InsertString("fofofo\n")
@@ -37,7 +37,7 @@ func main() {
 	editbox.InsertString("babababa\n")
 	editbox.InsertString("end")
 
-	editbox.SetCursor(0, 0)
+	editbox.CursorSet(0, 0)
 
 	for {
 		termwin.Flush()
