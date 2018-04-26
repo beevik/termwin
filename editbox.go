@@ -32,8 +32,7 @@ const (
 )
 
 var (
-	emptyCell   = tb.Cell{Ch: charSpace}
-	newlineCell = tb.Cell{Ch: charNewline}
+	emptyCell = tb.Cell{Ch: charSpace}
 )
 
 type row struct {
@@ -259,9 +258,7 @@ func (e *EditBox) DeleteCharLeft() {
 // DeleteChars deletes multiple characters starting from the current cursor
 // position.
 func (e *EditBox) DeleteChars(n int) {
-	for i := 0; i < n; i++ {
-		e.DeleteChar()
-	}
+	e.deleteChars(n, e.cursor.x, e.cursor.y)
 }
 
 // DeleteRow deletes the entire row containing the cursor.
@@ -298,7 +295,7 @@ func (e *EditBox) Selection() string {
 // SelectionStart starts a selection beginning at the current cursor position.
 // Any previously selected characters will be unselected.
 func (e *EditBox) SelectionStart() {
-	// TODO: do unselection
+	// TODO: deselect
 	e.selection.c0 = e.cursor
 	e.selection.c1 = e.cursor
 	e.selecting = true
@@ -313,7 +310,7 @@ func (e *EditBox) SelectionStop() string {
 
 	s := e.getRange(e.selection.ordered())
 
-	// TODO: do unselection
+	// TODO: deselect
 	e.selection.c0 = coord{}
 	e.selection.c1 = coord{}
 	e.selecting = false
@@ -323,9 +320,7 @@ func (e *EditBox) SelectionStop() string {
 
 // SelectionDelete deletes the current selection from the edit buffer.
 func (e *EditBox) SelectionDelete() {
-	if e.selecting {
-		e.deleteRange(e.selection.ordered())
-	}
+	e.deleteRange(e.selection.ordered())
 }
 
 // Cursor returns the cursor's current column and row within the edit buffer.
@@ -474,60 +469,114 @@ func (e *EditBox) SetView(x, y int) {
 func (e *EditBox) Contents() string {
 	r := crange{
 		c0: coord{0, 0},
-		c1: coord{maxValue, maxValue},
+		c1: coord{maxValue, len(e.rows) - 1},
 	}
 	return e.getRange(r)
 }
 
+// getCells returns cells in columns x0 through x1 on row y. This function
+// assumes y is a valid row and x0 <= x1.
+func (e *EditBox) getCells(y, x0, x1 int) []tb.Cell {
+	r := &e.rows[y]
+	rl := len(r.cells)
+	if y+1 < len(e.rows) {
+		rl--
+	}
+
+	x0, x1 = min(x0, rl), min(x1, rl)
+	return r.cells[x0:x1]
+}
+
+// appendCellChars appends the characters in a cell slice to a slice of bytes
+// and returns the updated slice.
+func appendCellChars(buf []byte, c []tb.Cell) []byte {
+	var rbuf [4]byte
+	for _, cc := range c {
+		sz := utf8.EncodeRune(rbuf[:], cc.Ch)
+		buf = append(buf, rbuf[:sz]...)
+	}
+	return buf
+}
+
 // getRange returns the contents of the edit buffer covering the specified
-// range.
+// range. This function assumes the y values in the range are valid.
 func (e *EditBox) getRange(r crange) string {
 	var buf []byte
-	var rbuf [4]byte
 
-	rmax := len(e.rows)
-
-	// First row
-	y := r.c0.y
-	if y < rmax {
-		row := &e.rows[y]
-		for x, xmax := r.c0.x, len(row.cells); x < xmax; x++ {
-			sz := utf8.EncodeRune(rbuf[:], row.cells[x].Ch)
-			buf = append(buf, rbuf[:sz]...)
-		}
-		y++
+	x, y := r.c0.x, r.c0.y
+	for ; y < r.c1.y; y++ {
+		buf = appendCellChars(buf, e.getCells(y, x, maxValue))
+		buf = append(buf, '\n')
+		x = 0
 	}
-
-	// Middle rows
-	for ymax := min(rmax, r.c1.y); y < ymax; y++ {
-		row := &e.rows[y]
-		for x, xmax := 0, len(row.cells); x < xmax; x++ {
-			sz := utf8.EncodeRune(rbuf[:], row.cells[x].Ch)
-			buf = append(buf, rbuf[:sz]...)
-		}
-	}
-
-	// Last row
-	if y < rmax && y <= r.c1.y {
-		row := &e.rows[y]
-		for x, xmax := 0, min(len(row.cells), r.c1.x); x < xmax; x++ {
-			sz := utf8.EncodeRune(rbuf[:], row.cells[x].Ch)
-			buf = append(buf, rbuf[:sz]...)
-		}
-	}
+	buf = appendCellChars(buf, e.getCells(y, x, r.c1.x))
 
 	return string(buf)
 }
 
-// deleteRange removes the range of text from the edit buffer.
+// deleteRange removes a range of text from the edit buffer.
 func (e *EditBox) deleteRange(r crange) {
-	inRange := e.cursor.inRange(r)
+	x, y := r.c0.x, r.c0.y
+	if y == r.c1.y {
+		e.deleteCells(y, r.c0.x, r.c1.x)
+	} else {
+		for i, n := 0, r.c1.y-r.c0.y; i < n; i++ {
+			e.deleteCells(y, x, maxValue)
+		}
+		e.deleteCells(y, x, x+r.c1.x)
+	}
+}
 
-	// TODO: write this
+// deleteChars deletes up to n characters starting at position (x,y). The
+// position (x,y) is assumed to be valid.
+func (e *EditBox) deleteChars(n, x, y int) {
+	for n > 0 {
+		r := &e.rows[y]
+		if len(r.cells) == 0 {
+			break
+		}
 
-	if inRange {
-		e.cursor = r.c0
-		e.updateView()
+		nn := min(len(r.cells)-x, n)
+		e.deleteCells(y, x, x+nn)
+		n -= nn
+
+		x = 0
+	}
+}
+
+// deleteCells deletes cells in columns [x0:x1] on row y. This function
+// assumes y is a valid row and x0 <= x1.
+func (e *EditBox) deleteCells(y, x0, x1 int) {
+	r := &e.rows[y]
+
+	// fix bounds
+	rl := len(r.cells)
+	x0 = min(x0, rl)
+	x1 = max(0, min(x1, rl))
+
+	// delete cells
+	e.updateDirtyRect(rect{x0, y, x1, y + 1})
+	if x1 < rl || y+1 == len(e.rows) {
+		r.cells = append(r.cells[:x0], r.cells[x1:]...)
+	} else {
+		nr := &e.rows[y+1]
+		r.cells = append(r.cells[:x0], nr.cells...)
+		e.rows = append(e.rows[:y+1], e.rows[y+2:]...)
+		e.updateDirtyRect(rect{0, y + 1, maxValue, maxValue})
+	}
+
+	// adjust cursor
+	switch {
+	case e.cursor.y < y:
+		// do nothing
+	case e.cursor.y > y:
+		e.cursor.y--
+	case e.cursor.x >= x1:
+		e.cursor.x -= (x1 - x0)
+		e.lastX = e.cursor.x
+	case e.cursor.x >= x0:
+		e.cursor.x = x0
+		e.lastX = e.cursor.x
 	}
 }
 
@@ -622,6 +671,7 @@ func (e *EditBox) updateSelection(x, y int) {
 	e.setCellAttribRange(r.ordered(), tb.ColorBlack, tb.ColorWhite)
 }
 
+// setCellAttribRange adjusts the attributes of all cells within a range.
 func (e *EditBox) setCellAttribRange(r crange, fg, bg tb.Attribute) {
 	x, y := r.c0.x, r.c0.y
 	for ; y < r.c1.y; y++ {

@@ -19,7 +19,7 @@ func main() {
 
 	editbox.InsertString("foobar01234567890")
 	editbox.CursorSet(0, 0)
-	editbox.InsertString("test\na\nb\nc\nd\n")
+	editbox.InsertString("00000\n11111\n22222\n33333\n4\n5\n")
 	editbox.CursorSet(-1, -1)
 	editbox.InsertString("lalala\n")
 	editbox.InsertString("fofofo\n")

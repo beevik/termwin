@@ -60,7 +60,7 @@ func (c coord) greaterThanOrEqual(c2 coord) bool {
 }
 
 func (c coord) inRange(r crange) bool {
-	return c.lessThan(r.c1) && c.greaterThanOrEqual(r.c0)
+	return c.lessThanOrEqual(r.c1) && c.greaterThanOrEqual(r.c0)
 }
 
 type crange struct {
