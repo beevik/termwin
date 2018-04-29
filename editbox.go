@@ -83,9 +83,9 @@ func (e *EditBox) onKey(ev tb.Event) {
 		e.CursorLeft()
 	case tb.KeyArrowRight, tb.KeyCtrlF:
 		e.CursorRight()
-	case tb.KeyArrowUp:
+	case tb.KeyArrowUp, tb.KeyCtrlP:
 		e.CursorUp()
-	case tb.KeyArrowDown:
+	case tb.KeyArrowDown, tb.KeyCtrlN:
 		e.CursorDown()
 	case tb.KeyHome, tb.KeyCtrlA:
 		e.CursorStartOfLine()
@@ -241,16 +241,18 @@ func (e *EditBox) DeleteChar() {
 // the cursor to the position of the deleted character. If the cursor is at
 // the start of the line, the newline is removed.
 func (e *EditBox) DeleteCharLeft() {
-	if e.cursor.x > 0 || e.cursor.y > 0 {
-		if e.selecting {
-			e.deleteRange(e.selection.ordered())
-			e.selecting = false
-			return
-		}
-
-		e.CursorLeft()
-		e.DeleteChar()
+	if e.cursor.x == 0 && e.cursor.y == 0 {
+		return
 	}
+
+	if e.selecting {
+		e.deleteRange(e.selection.ordered())
+		e.selecting = false
+		return
+	}
+
+	e.CursorLeft()
+	e.DeleteChar()
 }
 
 // DeleteChars deletes multiple characters starting from the current cursor
@@ -288,37 +290,6 @@ func (e *EditBox) Selection() string {
 		return e.getRange(e.selection.ordered())
 	}
 	return ""
-}
-
-// SelectionStart starts a selection beginning at the current cursor position.
-// Any previously selected characters will be unselected.
-func (e *EditBox) SelectionStart() {
-	// TODO: deselect
-	e.selection.c0 = e.cursor
-	e.selection.c1 = e.cursor
-	e.selecting = true
-}
-
-// SelectionStop ends the current selection and returns the string covered by
-// the selection.
-func (e *EditBox) SelectionStop() string {
-	if !e.selecting {
-		return ""
-	}
-
-	s := e.getRange(e.selection.ordered())
-
-	// TODO: deselect
-	e.selection.c0 = coord{}
-	e.selection.c1 = coord{}
-	e.selecting = false
-
-	return s
-}
-
-// SelectionDelete deletes the current selection from the edit buffer.
-func (e *EditBox) SelectionDelete() {
-	e.deleteRange(e.selection.ordered())
 }
 
 // Cursor returns the cursor's current column and row within the edit buffer.
@@ -382,37 +353,50 @@ func (e *EditBox) CursorRight() {
 
 // CursorDown moves the cursor down a line.
 func (e *EditBox) CursorDown() {
-	if e.cursor.y+1 < len(e.rows) {
-		cx, cy := e.lastX, e.cursor.y+1
-		rl := e.rowLen(cy)
-		if cx > rl {
-			cx = rl
-		}
-		e.updateCursor(cx, cy)
+	if e.cursor.y+1 >= len(e.rows) {
+		return
 	}
+
+	cx, cy := e.lastX, e.cursor.y+1
+	rl := e.rowLen(cy)
+	if cx > rl {
+		cx = rl
+	}
+	e.updateCursor(cx, cy)
 }
 
 // CursorUp moves the cursor up a line.
 func (e *EditBox) CursorUp() {
-	if e.cursor.y > 0 {
-		cx, cy := e.lastX, e.cursor.y-1
-		rl := e.rowLen(cy)
-		if cx > rl {
-			cx = rl
-		}
-		e.updateCursor(cx, cy)
+	if e.cursor.y == 0 {
+		return
 	}
+
+	cx, cy := e.lastX, e.cursor.y-1
+	rl := e.rowLen(cy)
+	if cx > rl {
+		cx = rl
+	}
+	e.updateCursor(cx, cy)
 }
 
 // CursorStartOfLine moves the cursor to the start of the current line.
 func (e *EditBox) CursorStartOfLine() {
-	e.updateCursor(0, e.cursor.y)
+	if (e.modifiers & tb.ModCtrl) != 0 {
+		e.updateCursor(0, 0)
+	} else {
+		e.updateCursor(0, e.cursor.y)
+	}
 	e.lastX = e.cursor.x
 }
 
 // CursorEndOfLine moves the cursor to the end of the current line.
 func (e *EditBox) CursorEndOfLine() {
-	cy := e.cursor.y
+	var cy int
+	if (e.modifiers & tb.ModCtrl) != 0 {
+		cy = len(e.rows) - 1
+	} else {
+		cy = e.cursor.y
+	}
 	cx := e.rowLen(cy)
 	e.updateCursor(cx, cy)
 	e.lastX = e.cursor.x
@@ -576,6 +560,7 @@ func (e *EditBox) deleteCells(y, x0, x1 int) {
 		e.cursor.x = x0
 		e.lastX = e.cursor.x
 	}
+	e.updateView()
 }
 
 // Draw updates the contents of the EditBox on the screen.
