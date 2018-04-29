@@ -59,43 +59,24 @@ func (r *row) grow(n int) {
 // An EditBox represents a editable text control with fixed screen dimensions.
 type EditBox struct {
 	flags        EditBoxFlags
-	size         coord  // dimensions of the edit box
-	screenCorner coord  // screen coordinate of top-left corner
-	viewRect     rect   // portion of edit buffer currently visible
-	dirtyRect    rect   // portions of the edit buffer that have been updated
-	rows         []row  // all rows in the edit buffer
-	cursor       coord  // current cursor position
-	lastX        int    // cursor X position after last horz move
-	selecting    bool   // cursor in selecting mode
-	selection    crange // current selection range
+	size         coord       // dimensions of the edit box
+	screenCorner coord       // screen coordinate of top-left corner
+	viewRect     rect        // portion of edit buffer currently visible
+	dirtyRect    rect        // portions of the edit buffer that have been updated
+	rows         []row       // all rows in the edit buffer
+	cursor       coord       // current cursor position
+	lastX        int         // cursor X position after last horz move
+	modifiers    tb.Modifier // modifier keys currently down
+	selecting    bool        // cursor in selecting mode
+	selection    crange      // current selection range
 }
-
-// selection mechanics:
-// - If a cursor movement key is pressed:
-//   - If shift is down and selecting is false:
-//     - store cursor position as selectStart
-//     - update cursor and selection
-//   - If shift is down and selecting is true:
-//     - update cursor and selection
-//   - If shift is up and selecting is false:
-//     - update cursor
-//   - If shift is up and selecting is true:
-//     - clear selection
-//     - update cursor
-//     - set selecting to false
-// - If a text key is pressed:
-//   - If selecting is true:
-//     - delete selection
-//     - insert key
-//   - If selecting is false:
-//	   - insert key
 
 func (e *EditBox) onDraw() {
 	e.Draw()
 }
 
 func (e *EditBox) onKey(ev tb.Event) {
-	e.selecting = (ev.Mod & tb.ModShift) != 0
+	e.modifiers = ev.Mod
 
 	switch ev.Key {
 	case tb.KeyArrowLeft, tb.KeyCtrlB:
@@ -653,6 +634,17 @@ func (e *EditBox) updateDirtyRect(r rect) {
 // updateCursor updates the position of the cursor. The new position is not
 // validated.
 func (e *EditBox) updateCursor(cx, cy int) {
+	shiftDown := (e.modifiers & tb.ModShift) != 0
+	switch {
+	case shiftDown && !e.selecting:
+		e.selection.c0 = e.cursor
+		e.selection.c1 = e.cursor
+		e.selecting = true
+	case !shiftDown && e.selecting:
+		e.unhighlight(e.selection.ordered())
+		e.selecting = false
+	}
+
 	if e.selecting {
 		e.updateSelection(cx, cy)
 	}
@@ -664,11 +656,38 @@ func (e *EditBox) updateCursor(cx, cy int) {
 // updateSelection updates the currently selected range of text in the edit
 // buffer.
 func (e *EditBox) updateSelection(x, y int) {
-	r := crange{
-		c0: coord{x, y},
-		c1: e.cursor,
+	curr := coord{x, y}
+	switch {
+	case e.selection.c0.lessThan(e.selection.c1):
+		switch {
+		case curr.lessThan(e.selection.c0):
+			e.unhighlight(crange{e.selection.c0, e.selection.c1})
+			e.highlight(crange{curr, e.selection.c0})
+		case curr.greaterThan(e.selection.c1):
+			e.highlight(crange{e.selection.c1, curr})
+		default:
+			e.unhighlight(crange{curr, e.selection.c1})
+		}
+	default:
+		switch {
+		case curr.lessThan(e.selection.c1):
+			e.highlight(crange{curr, e.selection.c1})
+		case curr.greaterThan(e.selection.c0):
+			e.unhighlight(crange{e.selection.c1, e.selection.c0})
+			e.highlight(crange{e.selection.c0, curr})
+		default:
+			e.unhighlight(crange{e.selection.c1, curr})
+		}
 	}
-	e.setCellAttribRange(r.ordered(), tb.ColorBlack, tb.ColorWhite)
+	e.selection.c1 = curr
+}
+
+func (e *EditBox) highlight(r crange) {
+	e.setCellAttribRange(r, tb.ColorBlack, tb.ColorWhite)
+}
+
+func (e *EditBox) unhighlight(r crange) {
+	e.setCellAttribRange(r, tb.ColorDefault, tb.ColorDefault)
 }
 
 // setCellAttribRange adjusts the attributes of all cells within a range.
