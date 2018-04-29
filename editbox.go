@@ -155,6 +155,11 @@ func (e *EditBox) Write(p []byte) (n int, err error) {
 // InsertChar inserts a new character at the current cursor position and
 // advances the cursor by one column.
 func (e *EditBox) InsertChar(ch rune) {
+	if e.selecting {
+		e.deleteRange(e.selection.ordered())
+		e.selecting = false
+	}
+
 	cx, cy := e.cursor.x, e.cursor.y
 	switch {
 	case ch < 32:
@@ -205,6 +210,12 @@ func (e *EditBox) InsertRow() {
 
 // DeleteChar deletes a single character at the current cursor position.
 func (e *EditBox) DeleteChar() {
+	if e.selecting {
+		e.deleteRange(e.selection.ordered())
+		e.selecting = false
+		return
+	}
+
 	cx, cy := e.cursor.x, e.cursor.y
 	rl := e.rowLen(cy)
 	row := &e.rows[cy]
@@ -231,6 +242,12 @@ func (e *EditBox) DeleteChar() {
 // the start of the line, the newline is removed.
 func (e *EditBox) DeleteCharLeft() {
 	if e.cursor.x > 0 || e.cursor.y > 0 {
+		if e.selecting {
+			e.deleteRange(e.selection.ordered())
+			e.selecting = false
+			return
+		}
+
 		e.CursorLeft()
 		e.DeleteChar()
 	}
@@ -536,7 +553,7 @@ func (e *EditBox) deleteCells(y, x0, x1 int) {
 	x1 = max(0, min(x1, rl))
 
 	// delete cells
-	e.updateDirtyRect(rect{x0, y, x1, y + 1})
+	e.updateDirtyRect(rect{x0, y, maxValue, y + 1})
 	if x1 < rl || y+1 == len(e.rows) {
 		r.cells = append(r.cells[:x0], r.cells[x1:]...)
 	} else {
