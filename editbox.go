@@ -13,10 +13,6 @@ const (
 	// EditBoxWordWrap causes the edit box to word-wrap a line of text when
 	// its length reaches the right edge of the screen.
 	EditBoxWordWrap EditBoxFlags = 1 << iota
-
-	// EditBoxSingleRow allows only a single row of text. Carriage returns
-	// and word-wrap are ignored.
-	EditBoxSingleRow
 )
 
 const (
@@ -115,6 +111,8 @@ func (e *EditBox) onKey(ev tb.Event) {
 		e.CopyToClipboard()
 	case tb.KeyCtrlV:
 		e.PasteFromClipboard()
+	case tb.KeyCtrlX:
+		e.CutToClipboard()
 	case tb.KeySpace:
 		e.InsertChar(charSpace)
 	case tb.KeyEnter:
@@ -130,12 +128,12 @@ func (e *EditBox) onKey(ev tb.Event) {
 	}
 }
 
-// onPositionCursor is by termwin every frame if this editbox has focus. It
-// tells termbox where to place the cursor on the screen.
-func (e *EditBox) onPositionCursor() {
-	cx := e.cursor.x - e.viewRect.x0 + e.screenCorner.x
-	cy := e.cursor.y - e.viewRect.y0 + e.screenCorner.y
-	tb.SetCursor(cx, cy)
+// getCursor returns the absolute screen position of the cursor.
+func (e *EditBox) getCursor() (x, y int, show bool) {
+	x = e.cursor.x - e.viewRect.x0 + e.screenCorner.x
+	y = e.cursor.y - e.viewRect.y0 + e.screenCorner.y
+	show = true
+	return
 }
 
 // NewEditBox creates a new EditBox control with the specified screen
@@ -305,6 +303,17 @@ func (e *EditBox) CopyToClipboard() {
 		ClipboardSet(e.getRange(e.selection.ordered()))
 	} else {
 		ClipboardClear()
+	}
+}
+
+// CutToClipboard copies the current selection to the clipboard and then
+// deletes it from the edit buffer.
+func (e *EditBox) CutToClipboard() {
+	if e.selecting {
+		r := e.selection.ordered()
+		ClipboardSet(e.getRange(r))
+		e.deleteRange(r)
+		e.selecting = false
 	}
 }
 

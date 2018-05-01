@@ -38,7 +38,8 @@ func Flush() {
 	}
 
 	if c.focus != nil {
-		c.focus.onPositionCursor()
+		x, y, _ := c.focus.getCursor()
+		tb.SetCursor(x, y)
 	}
 
 	tb.Flush()
