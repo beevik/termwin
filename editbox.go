@@ -69,7 +69,6 @@ type EditBox struct {
 	modifiers    tb.Modifier // modifier keys currently down
 	selecting    bool        // cursor in selecting mode
 	selection    crange      // current selection range
-	clipboard    string      // current clipboard contents
 }
 
 func (e *EditBox) onDraw() {
@@ -88,9 +87,21 @@ func (e *EditBox) onKey(ev tb.Event) {
 		e.CursorUp()
 	case tb.KeyArrowDown, tb.KeyCtrlN:
 		e.CursorDown()
-	case tb.KeyHome, tb.KeyCtrlA:
+	case tb.KeyHome:
+		if (ev.Mod & tb.ModCtrl) != 0 {
+			e.CursorStartOfBuffer()
+		} else {
+			e.CursorStartOfLine()
+		}
+	case tb.KeyCtrlA:
 		e.CursorStartOfLine()
-	case tb.KeyEnd, tb.KeyCtrlE:
+	case tb.KeyEnd:
+		if (ev.Mod & tb.ModCtrl) != 0 {
+			e.CursorEndOfBuffer()
+		} else {
+			e.CursorEndOfLine()
+		}
+	case tb.KeyCtrlE:
 		e.CursorEndOfLine()
 	case tb.KeyPgdn:
 		e.CursorPageDown()
@@ -291,9 +302,9 @@ func (e *EditBox) Size() (width, height int) {
 // CopyToClipboard copies the current selection to the clipboard.
 func (e *EditBox) CopyToClipboard() {
 	if e.selecting {
-		e.clipboard = e.getRange(e.selection.ordered())
+		ClipboardSet(e.getRange(e.selection.ordered()))
 	} else {
-		e.clipboard = ""
+		ClipboardClear()
 	}
 }
 
@@ -305,8 +316,9 @@ func (e *EditBox) PasteFromClipboard() {
 		e.selecting = false
 	}
 
-	if e.clipboard != "" {
-		e.InsertString(e.clipboard)
+	s := ClipboardGet()
+	if s != "" {
+		e.InsertString(s)
 	}
 }
 
@@ -406,24 +418,29 @@ func (e *EditBox) CursorUp() {
 	e.updateCursor(cx, cy)
 }
 
+// CursorStartOfBuffer moves the cursor to the start of the edit buffer.
+func (e *EditBox) CursorStartOfBuffer() {
+	e.updateCursor(0, 0)
+	e.lastX = e.cursor.x
+}
+
 // CursorStartOfLine moves the cursor to the start of the current line.
 func (e *EditBox) CursorStartOfLine() {
-	if (e.modifiers & tb.ModCtrl) != 0 {
-		e.updateCursor(0, 0)
-	} else {
-		e.updateCursor(0, e.cursor.y)
-	}
+	e.updateCursor(0, e.cursor.y)
+	e.lastX = e.cursor.x
+}
+
+// CursorEndOfBuffer moves the cursor to the end of the edit buffer.
+func (e *EditBox) CursorEndOfBuffer() {
+	cy := len(e.rows) - 1
+	cx := e.rowLen(cy)
+	e.updateCursor(cx, cy)
 	e.lastX = e.cursor.x
 }
 
 // CursorEndOfLine moves the cursor to the end of the current line.
 func (e *EditBox) CursorEndOfLine() {
-	var cy int
-	if (e.modifiers & tb.ModCtrl) != 0 {
-		cy = len(e.rows) - 1
-	} else {
-		cy = e.cursor.y
-	}
+	cy := e.cursor.y
 	cx := e.rowLen(cy)
 	e.updateCursor(cx, cy)
 	e.lastX = e.cursor.x
@@ -697,6 +714,7 @@ func (e *EditBox) updateSelection(x, y int) {
 		default:
 			e.unhighlight(crange{curr, e.selection.c1})
 		}
+
 	default:
 		switch {
 		case curr.lessThan(e.selection.c1):
