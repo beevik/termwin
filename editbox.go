@@ -69,6 +69,7 @@ type EditBox struct {
 	modifiers    tb.Modifier // modifier keys currently down
 	selecting    bool        // cursor in selecting mode
 	selection    crange      // current selection range
+	clipboard    string      // current clipboard contents
 }
 
 func (e *EditBox) onDraw() {
@@ -99,6 +100,10 @@ func (e *EditBox) onKey(ev tb.Event) {
 		e.DeleteChar()
 	case tb.KeyBackspace, tb.KeyBackspace2:
 		e.DeleteCharLeft()
+	case tb.KeyCtrlC:
+		e.CopyToClipboard()
+	case tb.KeyCtrlV:
+		e.PasteFromClipboard()
 	case tb.KeySpace:
 		e.InsertChar(charSpace)
 	case tb.KeyEnter:
@@ -281,6 +286,28 @@ func (e *EditBox) LastRow() int {
 // Size returns the width and height of the EditBox on screen.
 func (e *EditBox) Size() (width, height int) {
 	return e.size.x, e.size.y
+}
+
+// CopyToClipboard copies the current selection to the clipboard.
+func (e *EditBox) CopyToClipboard() {
+	if e.selecting {
+		e.clipboard = e.getRange(e.selection.ordered())
+	} else {
+		e.clipboard = ""
+	}
+}
+
+// PasteFromClipboard pastes the current clipboard contents to the edit buffer
+// at the current cursor position.
+func (e *EditBox) PasteFromClipboard() {
+	if e.selecting {
+		e.deleteRange(e.selection)
+		e.selecting = false
+	}
+
+	if e.clipboard != "" {
+		e.InsertString(e.clipboard)
+	}
 }
 
 // Selection returns the contents of the substring currently selected in the
