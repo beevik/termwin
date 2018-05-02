@@ -7,13 +7,13 @@ import (
 var c context
 
 type context struct {
-	windows []window
-	focus   window
+	windows []Window
+	focus   Window
 	kb      []byte
 	escaped bool
 }
 
-func addWindow(w window) {
+func addWindow(w Window) {
 	if len(c.windows) == 0 {
 		c.focus = w
 	}
@@ -31,29 +31,48 @@ func Init() error {
 	return nil
 }
 
+// Close shuts down the termwin system.
+func Close() {
+	tb.Close()
+}
+
+// Size returns the current dimensions of the screen.
+func Size() (x, y int) {
+	return tb.Size()
+}
+
 // Flush flushes the contents of the back buffer to the screen display.
 func Flush() {
 	for _, w := range c.windows {
 		w.onDraw()
 	}
 
-	if c.focus != nil {
-		x, y, _ := c.focus.getCursor()
-		tb.SetCursor(x, y)
+	if c.focus == nil {
+		tb.HideCursor()
+	} else {
+		x, y, show := c.focus.getCursor()
+		if show {
+			tb.SetCursor(x, y)
+		} else {
+			tb.HideCursor()
+		}
 	}
 
 	tb.Flush()
 }
 
-// Close shuts down the termwin system.
-func Close() {
-	tb.Close()
+// SetFocus removes the cursor focus from any window it is currently on and
+// adds focus to the specified window. If you pass nil for the window,
+// SetFocus removes focus from all windows.
+func SetFocus(w Window) {
+	c.focus = w
 }
 
 // Poll polls the system for an input event
-func Poll() {
+func Poll() error {
 	switch ev := tb.PollEvent(); ev.Type {
 	case tb.EventKey:
+		Logf("Ch=0x%02X Key=0x%04X Mod=0x%02X\n", ev.Ch, ev.Key, ev.Mod)
 		if ev.Ch != 0 {
 			if c.escaped {
 				c.kb = append(c.kb, byte(ev.Ch))
@@ -71,12 +90,17 @@ func Poll() {
 		}
 
 		if c.focus != nil {
-			c.focus.onKey(ev)
+			err := c.focus.onKey(ev)
+			if err != nil {
+				return err
+			}
 		}
 
 	case tb.EventError:
-		panic(ev.Err)
+		return ev.Err
 	}
+
+	return nil
 }
 
 type keymod struct {
@@ -108,5 +132,5 @@ var escSeq = map[string]keymod{
 func handleEscSeq(ev *tb.Event) {
 	s := escSeq[string(c.kb)]
 	ev.Ch, ev.Key, ev.Mod = 0, s.Key, s.Mod
-	Logf("%s => %d,%d\n", string(c.kb), ev.Key, ev.Mod)
+	//Logf("%s => %d,%d\n", string(c.kb), ev.Key, ev.Mod)
 }

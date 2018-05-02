@@ -5,7 +5,9 @@ const (
 	maxValue = ((1 << 31) - 1)
 )
 
-var emptyRect = rect{maxValue, maxValue, minValue, minValue}
+//
+// coord
+//
 
 type coord struct {
 	x, y int
@@ -63,6 +65,11 @@ func (c coord) inRange(r crange) bool {
 	return c.lessThanOrEqual(r.c1) && c.greaterThanOrEqual(r.c0)
 }
 
+//
+// crange
+//
+
+// A crange represents a range of characters within a screenbuf.
 type crange struct {
 	c0 coord
 	c1 coord
@@ -78,6 +85,12 @@ func (r crange) ordered() crange {
 	}
 	return r
 }
+
+//
+// rect
+//
+
+var emptyRect = rect{maxValue, maxValue, minValue, minValue}
 
 type rect struct {
 	x0, y0 int

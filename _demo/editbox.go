@@ -1,7 +1,8 @@
 package main
 
 import (
-	"github.com/nsf/termbox-go"
+	"fmt"
+	"strings"
 
 	"github.com/beevik/termwin"
 )
@@ -13,41 +14,27 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer termwin.Close()
 
-	editbox := termwin.NewEditBox(25, 8, 16, 10, termwin.EditBoxWordWrap)
+	x, y := termwin.Size()
 
-	editbox.InsertString("foobar01234567890")
-	editbox.CursorSet(0, 0)
-	editbox.InsertString("00000\n11111\n22222\n33333\n4\n5\n")
-	editbox.CursorSet(-1, -1)
-	editbox.InsertString("lalala\n")
-	editbox.InsertString("fofofo\n")
-	editbox.InsertString("fofofo\n")
-	editbox.InsertString("fofofo\n")
-	editbox.InsertString("fofofo\n")
-	editbox.InsertString("fofofo\n")
-	editbox.InsertString("fofofo\n")
-	editbox.InsertString("babababa\n")
-	editbox.InsertString("babababa\n")
-	editbox.InsertString("babababa\n")
-	editbox.InsertString("babababa\n")
-	editbox.InsertString("babababa\n")
-	editbox.InsertString("babababa\n")
-	editbox.InsertString("babababa\n")
-	editbox.InsertString("end")
+	editbox := termwin.NewEditBox(1, 1, x-2, y-2, 0)
+
+	editbox.InsertString(strings.Repeat("-", x-3) + "\n")
+	for i := 1; i <= 50; i++ {
+		editbox.InsertString(fmt.Sprintf("Line %d\n", i))
+	}
+	editbox.InsertString(strings.Repeat("-", x-3) + "\n")
 
 	editbox.CursorSet(0, 0)
 
 	for {
 		termwin.Flush()
-		termwin.Poll()
+		if termwin.Poll() != nil {
+			break
+		}
 	}
-}
 
-func erase() {
-	buf := termbox.CellBuffer()
-	for i := 0; i < len(buf); i++ {
-		buf[i].Ch = '@'
-	}
+	termwin.Close()
+
+	fmt.Println(editbox.Contents())
 }
