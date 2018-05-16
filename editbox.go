@@ -47,9 +47,21 @@ func (e *EditBox) onKey(ev tb.Event) error {
 	e.modifiers = ev.Mod
 
 	switch ev.Key {
-	case tb.KeyArrowLeft, tb.KeyCtrlB:
+	case tb.KeyArrowLeft:
+		if (ev.Mod & tb.ModCtrl) != 0 {
+			e.CursorWordStart()
+		} else {
+			e.CursorLeft()
+		}
+	case tb.KeyCtrlB:
 		e.CursorLeft()
-	case tb.KeyArrowRight, tb.KeyCtrlF:
+	case tb.KeyArrowRight:
+		if (ev.Mod & tb.ModCtrl) != 0 {
+			e.CursorWordEnd()
+		} else {
+			e.CursorRight()
+		}
+	case tb.KeyCtrlF:
 		e.CursorRight()
 	case tb.KeyArrowUp, tb.KeyCtrlP:
 		e.CursorUp()

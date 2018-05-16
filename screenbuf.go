@@ -348,6 +348,23 @@ func (b *screenBox) CursorUp() {
 	b.updateCursor(cx, cy)
 }
 
+// CursorWordStart moves the cursor to the start of the word.
+func (b *screenBox) CursorWordStart() {
+	b.CursorLeft()
+}
+
+// CursorWordEnd moves the cursor to end of the word.
+func (b *screenBox) CursorWordEnd() {
+	c := b.cursor
+	for b.isValid(c) && !isCellChar(b.getCell(c)) {
+		c = b.nextCell(c)
+	}
+	for b.isValid(c) && isCellChar(b.getCell(c)) {
+		c = b.nextCell(c)
+	}
+	b.updateCursor(c.x, c.y)
+}
+
 // CursorStartOfBuffer moves the cursor to the start of the edit buffer.
 func (b *screenBox) CursorStartOfBuffer() {
 	b.updateCursor(0, 0)
@@ -579,6 +596,12 @@ func (b *screenBox) rowLen(y int) int {
 	return rl
 }
 
+// getCell returns a copy of the cell at the requested coordinate.
+func (b *screenBox) getCell(c coord) *tb.Cell {
+	row := &b.rows[c.y]
+	return &row.cells[c.x]
+}
+
 // cellAtPos returns a pointer to a back-cuffer cell at the requested
 // position.
 func (b *screenBox) cellAtPos(x, y int) *tb.Cell {
@@ -592,6 +615,28 @@ func (b *screenBox) cellAtPos(x, y int) *tb.Cell {
 	}
 
 	return &row.cells[x]
+}
+
+func (b *screenBox) nextCell(c coord) coord {
+	rl := b.rowLen(c.y)
+	if c.x < rl {
+		return coord{c.x + 1, c.y}
+	} else if c.y+1 < len(b.rows) {
+		return coord{0, c.y + 1}
+	} else {
+		return c
+	}
+}
+
+func (b *screenBox) isValid(c coord) bool {
+	switch {
+	case c.y >= len(b.rows):
+		return false
+	case c.x > len(b.rows[c.y].cells):
+		return false
+	default:
+		return true
+	}
 }
 
 // updateDirtyRect adds a rectangle to the currently dirty rectangle. The
@@ -716,4 +761,10 @@ func clearCells(c []tb.Cell) {
 
 func setCellAttrib(c *tb.Cell, fg, bg tb.Attribute) {
 	c.Fg, c.Bg = fg, bg
+}
+
+func isCellChar(cell *tb.Cell) bool {
+	return (cell.Ch >= 'a' && cell.Ch <= 'z') ||
+		(cell.Ch >= 'A' && cell.Ch <= 'Z') ||
+		(cell.Ch >= '0' && cell.Ch <= '9')
 }
