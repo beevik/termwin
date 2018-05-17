@@ -1,6 +1,7 @@
 package termwin
 
 import (
+	"errors"
 	"unicode/utf8"
 
 	tb "github.com/nsf/termbox-go"
@@ -350,19 +351,68 @@ func (b *screenBox) CursorUp() {
 
 // CursorWordStart moves the cursor to the start of the word.
 func (b *screenBox) CursorWordStart() {
-	b.CursorLeft()
+	c := b.cursor
+	for {
+		p, r, err := b.prevThenGet(c)
+		if err != nil || !isWhitespace(r) {
+			break
+		}
+		c = p
+	}
+	for {
+		p, r, err := b.prevThenGet(c)
+		if err != nil || isWhitespace(r) {
+			break
+		}
+		c = p
+	}
+
+	b.updateCursor(c.x, c.y)
+	b.lastX = b.cursor.x
 }
 
 // CursorWordEnd moves the cursor to end of the word.
 func (b *screenBox) CursorWordEnd() {
 	c := b.cursor
-	for b.isValid(c) && !isCellChar(b.getCell(c)) {
-		c = b.nextCell(c)
+	for {
+		n, r, err := b.getThenNext(c)
+		if err != nil || !isWhitespace(r) {
+			break
+		}
+		c = n
 	}
-	for b.isValid(c) && isCellChar(b.getCell(c)) {
-		c = b.nextCell(c)
+	for {
+		n, r, err := b.getThenNext(c)
+		if err != nil || isWhitespace(r) {
+			break
+		}
+		c = n
 	}
+
 	b.updateCursor(c.x, c.y)
+	b.lastX = b.cursor.x
+}
+
+func (b *screenBox) prevThenGet(c coord) (p coord, r rune, err error) {
+	if c.x == 0 && c.y == 0 {
+		err = errors.New("invalid cell")
+		return
+	}
+
+	p = b.prevCell(c)
+	r = b.rows[p.y].cells[p.x].Ch
+	return
+}
+
+func (b *screenBox) getThenNext(c coord) (n coord, r rune, err error) {
+	if c.y == len(b.rows)-1 && c.x == len(b.rows[c.y].cells) {
+		err = errors.New("invalid cell")
+		return
+	}
+
+	r = b.rows[c.y].cells[c.x].Ch
+	n = b.nextCell(c)
+	return
 }
 
 // CursorStartOfBuffer moves the cursor to the start of the edit buffer.
@@ -596,27 +646,13 @@ func (b *screenBox) rowLen(y int) int {
 	return rl
 }
 
-// getCell returns a copy of the cell at the requested coordinate.
-func (b *screenBox) getCell(c coord) *tb.Cell {
-	row := &b.rows[c.y]
-	return &row.cells[c.x]
+// cellAtPos returns a pointer to the cell at the requested buffer position.
+func (b *screenBox) cellAtPos(c coord) *tb.Cell {
+	return &b.rows[c.y].cells[c.x]
 }
 
-// cellAtPos returns a pointer to a back-cuffer cell at the requested
-// position.
-func (b *screenBox) cellAtPos(x, y int) *tb.Cell {
-	if x < 0 || y < 0 || y >= len(b.rows) {
-		return nil
-	}
-	row := &b.rows[y]
-	rl := b.rowLen(y)
-	if x >= rl {
-		return nil
-	}
-
-	return &row.cells[x]
-}
-
+// nextCell returns the cell buffer position of the next character following
+// the coordinate.
 func (b *screenBox) nextCell(c coord) coord {
 	rl := b.rowLen(c.y)
 	if c.x < rl {
@@ -628,14 +664,16 @@ func (b *screenBox) nextCell(c coord) coord {
 	}
 }
 
-func (b *screenBox) isValid(c coord) bool {
+// prevCell returns the cell buffer position of the character just before
+// the coordinate.
+func (b *screenBox) prevCell(c coord) coord {
 	switch {
-	case c.y >= len(b.rows):
-		return false
-	case c.x > len(b.rows[c.y].cells):
-		return false
+	case c.y == 0 && c.x == 0:
+		return c
+	case c.x > 0:
+		return coord{c.x - 1, c.y}
 	default:
-		return true
+		return coord{b.rowLen(c.y - 1), c.y - 1}
 	}
 }
 
@@ -717,7 +755,7 @@ func (b *screenBox) setCellAttribRange(r crange, fg, bg tb.Attribute) {
 		x = 0
 	}
 	for ; x < r.c1.x; x++ {
-		setCellAttrib(b.cellAtPos(x, y), fg, bg)
+		setCellAttrib(b.cellAtPos(coord{x, y}), fg, bg)
 	}
 
 	b.updateDirtyRect(rect{0, r.c0.y, maxValue, r.c1.y + 1})
@@ -763,8 +801,6 @@ func setCellAttrib(c *tb.Cell, fg, bg tb.Attribute) {
 	c.Fg, c.Bg = fg, bg
 }
 
-func isCellChar(cell *tb.Cell) bool {
-	return (cell.Ch >= 'a' && cell.Ch <= 'z') ||
-		(cell.Ch >= 'A' && cell.Ch <= 'Z') ||
-		(cell.Ch >= '0' && cell.Ch <= '9')
+func isWhitespace(r rune) bool {
+	return r == ' '
 }
